@@ -9,7 +9,7 @@ use crate::timeline::{build_tempo_map, extract_sound_events};
 use ahash::AHashMap;
 use rayon::prelude::*;
 use std::collections::HashSet;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use wide::f32x8;
 
 type DecodeResult = Result<(usize, (Vec<f32>, usize)), String>;
@@ -48,11 +48,11 @@ fn convert_to_i16_simd(samples: &[f32], buf_bytes: &mut Vec<u8>) {
 }
 
 #[inline]
-fn js_value_to_bytes(val: &JsValue, rel_path: &str) -> Result<Vec<u8>, JsValue> {
+fn js_value_to_bytes(val: &JsValue, rel_path: &str) -> Result<Arc<[u8]>, JsValue> {
     if let Some(u8a) = val.dyn_ref::<Uint8Array>() {
         let mut v = vec![0u8; u8a.length() as usize];
         u8a.copy_to(&mut v[..]);
-        Ok(v)
+        Ok(Arc::from(v))
     } else {
         Err(JsValue::from_str(&format!(
             "Value for {} is not Uint8Array",
@@ -138,7 +138,7 @@ pub async fn convert_bms_to_wav(
         ));
     };
 
-    let mut inputs: Vec<(usize, Vec<u8>)> = Vec::with_capacity(ordered_ids.len());
+    let mut inputs: Vec<(usize, Arc<[u8]>)> = Vec::with_capacity(ordered_ids.len());
     for (i, &id) in ordered_ids.iter().enumerate() {
         let rel_path = &paths[i];
         let val = arr.get(i as u32);
@@ -147,7 +147,7 @@ pub async fn convert_bms_to_wav(
             continue;
         }
         match js_value_to_bytes(&val, rel_path) {
-            Ok(bytes_vec) => inputs.push((id, bytes_vec)),
+            Ok(bytes_arc) => inputs.push((id, bytes_arc)),
             Err(_) => {
                 // Audio is not a Uint8Array so skip it.
                 continue;

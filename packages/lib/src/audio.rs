@@ -17,13 +17,12 @@ pub const MIX_CH: usize = 2;
 ///
 /// # Arguments
 ///
-/// * `data` - Input audio data as a vector of bytes
+/// * `data` - Input audio data as Arc<[u8]> to avoid extra allocation
 ///
 /// # Returns
 ///
 /// * `Result<(Vec<f32>, usize), String>` - Result containing decoded audio as a vector of f32 samples and number of frames, or error message
-pub fn decode_audio(data: Vec<u8>) -> Result<(Vec<f32>, usize), String> {
-    let data: Arc<[u8]> = Arc::from(data);
+pub fn decode_audio(data: Arc<[u8]>) -> Result<(Vec<f32>, usize), String> {
     let probed = probe_with_fallback(data.clone()).map_err(|e| format!("probe error: {}", e))?;
 
     let mut format = probed.format;
@@ -179,9 +178,9 @@ pub fn decode_audio(data: Vec<u8>) -> Result<(Vec<f32>, usize), String> {
 ///
 /// # Arguments
 ///
-/// * `datas` - Vector of audio data as vectors of bytes
+/// * `datas` - Vector of audio data as Arc slices
 ///
-pub fn decode_audio_batch(datas: Vec<Vec<u8>>) -> Vec<Result<(Vec<f32>, usize), String>> {
+pub fn decode_audio_batch(datas: Vec<Arc<[u8]>>) -> Vec<Result<(Vec<f32>, usize), String>> {
     datas.into_par_iter().map(decode_audio).collect()
 }
 

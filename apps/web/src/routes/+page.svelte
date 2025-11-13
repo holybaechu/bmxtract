@@ -116,12 +116,17 @@
               const missingFiles: string[] = [];
               const buffers = await Promise.all(
                 paths.map(async (path) => {
-                  let file = item.files.find((f) => f.name === path);
-                  const fileName = path.split(".").slice(0, -1).join(".");
-                  // Try fallback extensions
-                  if (!file) file = item.files.find((f) => f.name === fileName + ".wav");
-                  if (!file) file = item.files.find((f) => f.name === fileName + ".mp3");
-                  if (!file) file = item.files.find((f) => f.name === fileName + ".ogg");
+                  const lowerPath = path.toLowerCase();
+                  let file = item.fileIndex.get(lowerPath);
+
+                  if (!file) {
+                    const lastDot = lowerPath.lastIndexOf(".");
+                    if (lastDot > 0) {
+                      const nameWithoutExt = lowerPath.substring(0, lastDot);
+                      file = item.fileIndex.get(nameWithoutExt);
+                    }
+                  }
+
                   if (!file) {
                     console.warn(`File not found: ${path}`);
                     missingFiles.push(path);
