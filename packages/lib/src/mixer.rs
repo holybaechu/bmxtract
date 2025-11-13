@@ -216,9 +216,7 @@ pub fn mix_chunk(
             let r = d + s;
 
             let result: [f32; 8] = r.into();
-            unsafe {
-                std::ptr::copy_nonoverlapping(result.as_ptr(), dst_slice.as_mut_ptr().add(i), 8);
-            }
+            dst_slice[i..i + 8].copy_from_slice(&result);
         }
 
         // Scalar path: process remaining samples
