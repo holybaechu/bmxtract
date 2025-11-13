@@ -4,11 +4,12 @@
   import * as Select from "$lib/components/ui/select/index.ts";
   import { Card } from "$lib/components/ui/card/index.ts";
   import {
-    Plus as PlusIcon,
-    Upload as UploadIcon,
-    Check as CheckIcon,
-    Trash as TrashIcon,
-    Download as DownloadIcon,
+    PlusIcon,
+    UploadIcon,
+    CheckIcon,
+    TrashIcon,
+    DownloadIcon,
+    RefreshCwIcon,
   } from "@lucide/svelte";
   import { Checkbox } from "$lib/components/ui/checkbox/index.ts";
   import { onMount } from "svelte";
@@ -18,6 +19,7 @@
   import { collectFilesFromDirectory } from "$lib/utils/fileSystem";
   import { MessageType, type Message } from "$lib/types";
   import { BlobWriter, ZipWriter, Uint8ArrayReader } from "@zip.js/zip.js";
+  import { Spinner } from "$lib/components/ui/spinner/index.ts";
 
   let selectedChart = $state<string | undefined>();
   let dropZone: HTMLDivElement;
@@ -251,8 +253,13 @@
     }
   }
 
-  function startAllRenders() {
-    return Promise.all([...bmsQueue.entries()].map(([id, item]) => startRender(id, item)));
+  let converting = $state(false);
+  let compressing = $state(false);
+
+  async function startAllRenders() {
+    converting = true;
+    await Promise.all([...bmsQueue.entries()].map(([id, item]) => startRender(id, item)));
+    converting = false;
   }
 </script>
 
@@ -429,11 +436,14 @@
   <div class="flex justify-end gap-2">
     <Button
       variant="secondary"
-      disabled={!bmsQueue.size || !Array.from(bmsQueue.values()).every((item) => item.resultBuffer)}
+      disabled={!bmsQueue.size ||
+        !Array.from(bmsQueue.values()).every((item) => item.resultBuffer) ||
+        compressing}
       onclick={async () => {
         const blobWriter = new BlobWriter();
         const zipWriter = new ZipWriter(blobWriter);
 
+        compressing = true;
         await Promise.all(
           Array.from(bmsQueue.values()).map((item) => {
             if (!item.resultBuffer) return;
@@ -452,9 +462,22 @@
         a.href = url;
         a.download = "output.zip";
         a.click();
-      }}>Download all</Button
+        compressing = false;
+      }}
     >
-    <Button onclick={startAllRenders} disabled={!workerReady || bmsQueue.size === 0}>
+      {#if compressing}
+        <Spinner />
+      {:else}
+        <DownloadIcon />
+      {/if}
+      Download all</Button
+    >
+    <Button onclick={startAllRenders} disabled={!workerReady || bmsQueue.size === 0 || converting}>
+      {#if converting}
+        <Spinner />
+      {:else}
+        <RefreshCwIcon />
+      {/if}
       Convert
     </Button>
   </div>
