@@ -75,7 +75,7 @@
 
       itemToAdd = new BmsQueueItem(directory.name, files);
     } catch (error) {
-      console.error("Failed to read dropped directory", error);
+      toast.error(`Failed to read dropped directory: ${error}`);
     }
   };
 
@@ -118,11 +118,12 @@
               const missingFiles: string[] = [];
               const buffers = await Promise.all(
                 paths.map(async (path) => {
-                  const file = item.fileIndex.get(path.split(".").slice(0, -1).join("."));
+                  const fileName = path.toLowerCase().split(".").slice(0, -1).join(".");
+                  const file = item.fileIndex.get(fileName);
 
                   if (!file) {
-                    console.warn(`File not found: ${path}`);
-                    missingFiles.push(path);
+                    console.warn(`File not found: ${fileName}`);
+                    missingFiles.push(fileName);
                     return new ArrayBuffer(0);
                   }
 
@@ -341,7 +342,7 @@
               );
 
               if (isDuplicate) {
-                alert("This chart is already in the queue.");
+                toast.error("This chart is already in the queue.");
                 return;
               }
 

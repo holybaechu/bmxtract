@@ -16,7 +16,7 @@ export class BmsQueueItem {
     for (const file of files) {
       const lowerName = file.name.toLowerCase();
       if (lowerName.endsWith(".wav") || lowerName.endsWith(".ogg") || lowerName.endsWith(".mp3")) {
-        this.fileIndex.set(file.name.split(".").slice(0, -1).join("."), file);
+        this.fileIndex.set(lowerName.split(".").slice(0, -1).join("."), file);
       } else {
         this.fileIndex.set(file.name, file);
       }
