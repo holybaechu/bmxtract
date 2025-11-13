@@ -1,0 +1,19 @@
+[package]
+name = "bmxtract"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+symphonia = { version = "0.5.5", features = ["wav", "ogg", "mp3", "flac"] }
+bytemuck = "1.24.0"
+js-sys = "0.3.82"
+rayon = "1.11.0"
+wasm-bindgen-rayon = "1.3.0"
+wasm-bindgen-futures = "0.4.55"
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+ahash = "0.8.12"
+wide = "0.8.2"
+wasm-bindgen = "0.2.105"

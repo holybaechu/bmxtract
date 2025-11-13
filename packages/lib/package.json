@@ -1,0 +1,20 @@
+{
+  "name": "@bmxtract/lib",
+  "type": "module",
+  "private": true,
+  "exports": "./pkg/bmxtract.js",
+  "types": "./pkg/bmxtract.d.ts",
+  "files": [
+    "pkg/"
+  ],
+  "scripts": {
+    "format": "cargo fmt",
+    "lint": "cargo clippy",
+    "dev": "watchexec -r -e rs,toml -- pnpm run build",
+    "build": "wasm-pack build --target web",
+    "check": "pnpm run build"
+  },
+  "devDependencies": {
+    "wasm-pack": "^0.13.1"
+  }
+}
