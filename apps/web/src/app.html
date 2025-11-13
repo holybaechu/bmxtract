@@ -3,6 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Performance: Enable aggressive preloading -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+    <!-- Hint to browser that WASM and workers are critical -->
+    <link rel="preload" href="/src/lib/renderWorker.ts" as="script" type="module" />
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

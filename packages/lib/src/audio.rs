@@ -17,7 +17,7 @@ pub const MIX_CH: usize = 2;
 ///
 /// # Arguments
 ///
-/// * `data` - Input audio data as Arc<[u8]> to avoid extra allocation
+/// * `data` - Input audio data as Arc<[u8]>
 ///
 /// # Returns
 ///
