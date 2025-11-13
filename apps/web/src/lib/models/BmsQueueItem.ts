@@ -1,28 +1,24 @@
 export class BmsQueueItem {
   name: string;
-  files: File[];
-  fileIndex: Map<string, File>;
   chart?: string;
-  resultBuffer?: ArrayBuffer;
-  progress?: number;
+  fileIndex: Map<string, File>;
   stage?: string;
-  missingFiles?: string[];
+  progress?: number;
+  resultBuffer?: ArrayBuffer;
 
   constructor(name: string, files: File[], chart?: string) {
     this.name = name;
-    this.files = files;
     this.chart = chart;
-    this.progress = 0;
     this.stage = "Queued";
+    this.progress = 0;
 
     this.fileIndex = new Map();
     for (const file of files) {
       const lowerName = file.name.toLowerCase();
-      this.fileIndex.set(lowerName, file);
-
-      const nameWithoutExt = lowerName.substring(0, lowerName.lastIndexOf("."));
-      if (!this.fileIndex.has(nameWithoutExt)) {
-        this.fileIndex.set(nameWithoutExt, file);
+      if (lowerName.endsWith(".wav") || lowerName.endsWith(".ogg") || lowerName.endsWith(".mp3")) {
+        this.fileIndex.set(file.name.split(".").slice(0, -1).join("."), file);
+      } else {
+        this.fileIndex.set(file.name, file);
       }
     }
   }

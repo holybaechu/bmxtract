@@ -29,12 +29,14 @@
   let createdUrls: string[] = [];
 
   const triggerContent = $derived(
-    itemToAdd?.files.find((f) => {
-      return f.name === selectedChart;
-    })?.name ?? `Select a chart`,
+    selectedChart ? itemToAdd?.fileIndex.get(selectedChart)?.name : `Select a chart`,
   );
   const bmsFiles = $derived(
-    itemToAdd?.files.filter((f) => f.name.endsWith(".bms") || f.name.endsWith(".bme")),
+    itemToAdd
+      ? Array.from(itemToAdd.fileIndex.values()).filter(
+          (f) => f.name.endsWith(".bms") || f.name.endsWith(".bme"),
+        )
+      : undefined,
   );
 
   const ondragover = (e: DragEvent) => {
@@ -116,16 +118,7 @@
               const missingFiles: string[] = [];
               const buffers = await Promise.all(
                 paths.map(async (path) => {
-                  const lowerPath = path.toLowerCase();
-                  let file = item.fileIndex.get(lowerPath);
-
-                  if (!file) {
-                    const lastDot = lowerPath.lastIndexOf(".");
-                    if (lastDot > 0) {
-                      const nameWithoutExt = lowerPath.substring(0, lastDot);
-                      file = item.fileIndex.get(nameWithoutExt);
-                    }
-                  }
+                  const file = item.fileIndex.get(path.split(".").slice(0, -1).join("."));
 
                   if (!file) {
                     console.warn(`File not found: ${path}`);
@@ -137,11 +130,8 @@
                 }),
               );
 
-              // Store missing files in the item
-              if (missingFiles.length > 0) {
-                bmsQueue.set(id, { ...item, missingFiles });
+              if (missingFiles.length > 0)
                 toast.warning(`${missingFiles.length} audio file(s) not found`);
-              }
 
               worker.postMessage(
                 {
@@ -231,10 +221,8 @@
     }
 
     try {
-      const chartFile = item.files.find((f) => f.name === item.chart);
-      if (!chartFile) {
-        throw new Error("Chart file not found");
-      }
+      const chartFile = item.chart ? item.fileIndex.get(item.chart) : undefined;
+      if (!chartFile) throw new Error("Chart file not found");
 
       const bmsText = await chartFile.text();
 
@@ -384,11 +372,6 @@
                 {#if item.progress !== undefined && item.progress < 100}
                   <p class="text-xs text-muted-foreground">
                     {item.stage} - {item.progress}%
-                  </p>
-                {/if}
-                {#if item.missingFiles && item.missingFiles.length > 0}
-                  <p class="text-xs text-yellow-600">
-                    ⚠️ {item.missingFiles.length} file(s) missing
                   </p>
                 {/if}
               </div>
