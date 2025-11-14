@@ -29,7 +29,9 @@
   let createdUrls: string[] = [];
 
   const triggerContent = $derived(
-    selectedChart ? itemToAdd?.fileIndex.get(selectedChart)?.name : `Select a chart`,
+    selectedChart && itemToAdd
+      ? (itemToAdd.fileIndex.get(selectedChart)?.name ?? `Select a chart`)
+      : `Select a chart`,
   );
   const bmsFiles = $derived(
     itemToAdd
@@ -116,21 +118,27 @@
               }
 
               const missingFiles: string[] = [];
-              const buffers = await Promise.all(
-                paths.map(async (path) => {
-                  const fileName = path.toLowerCase().split(".").slice(0, -1).join(".");
-                  const file = item.fileIndex.get(fileName);
+              const buffers: ArrayBuffer[] = [];
+              const batchSize = Math.max(4, navigator.hardwareConcurrency * 2);
 
-                  if (!file) {
-                    console.warn(`File not found: ${fileName}`);
-                    missingFiles.push(fileName);
-                    return new ArrayBuffer(0);
-                  }
+              for (let i = 0; i < paths.length; i += batchSize) {
+                const batch = paths.slice(i, i + batchSize);
+                const batchBuffers = await Promise.all(
+                  batch.map((path) => {
+                    const fileName = path.toLowerCase().split(".").slice(0, -1).join(".");
+                    const file = item.fileIndex.get(fileName);
 
-                  return await file.arrayBuffer();
-                }),
-              );
+                    if (!file) {
+                      console.warn(`File not found: ${fileName}`);
+                      missingFiles.push(fileName);
+                      return new ArrayBuffer(0);
+                    }
 
+                    return file.arrayBuffer();
+                  }),
+                );
+                buffers.push(...batchBuffers);
+              }
               if (missingFiles.length > 0)
                 toast.warning(`${missingFiles.length} audio file(s) not found`);
 
@@ -333,21 +341,14 @@
             onclick={() => {
               if (!itemToAdd || !selectedChart) return;
 
-              itemToAdd.chart = selectedChart;
-
               // Check for duplicates
               const isDuplicate = Array.from(bmsQueue.values()).some(
-                (existing) =>
-                  existing.name === itemToAdd!.name && existing.chart === itemToAdd!.chart,
+                (existing) => existing.name === itemToAdd!.name && existing.chart === selectedChart,
               );
 
-              if (isDuplicate) {
-                toast.error("This chart is already in the queue.");
-                return;
-              }
+              if (isDuplicate) return toast.error("This chart is already in the queue.");
 
-              bmsQueue.set(crypto.randomUUID(), itemToAdd);
-              itemToAdd = null;
+              bmsQueue.set(crypto.randomUUID(), { ...itemToAdd, chart: selectedChart });
               dialogOpen = false;
             }}
           >
