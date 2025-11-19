@@ -104,6 +104,8 @@ impl Bms {
     }
 }
 
+pub type ObjectId = u16;
+
 /// Header metadata and lookup tables of a BMS chart.
 #[derive(Debug, Default)]
 pub struct Header {
@@ -132,13 +134,13 @@ pub struct Header {
     /// Long note handling type.
     pub ln_type: Option<u8>,
     /// Long note end object id.
-    pub ln_obj: Option<String>,
+    pub ln_obj: Option<ObjectId>,
     /// Mapping from object id to audio filename.
-    pub audio_files: HashMap<String, String>,
+    pub audio_files: HashMap<ObjectId, String>,
     /// Mapping from BPM id to BPM value.
-    pub bpm_table: HashMap<String, f64>,
+    pub bpm_table: HashMap<ObjectId, f64>,
     /// Mapping from STOP id to stop duration.
-    pub stop_table: HashMap<String, f64>,
+    pub stop_table: HashMap<ObjectId, f64>,
 }
 
 impl Header {
@@ -173,10 +175,10 @@ impl Header {
             "DIFFICULTY" => self.difficulty = value.parse().ok(),
             "TOTAL" => self.total = value.parse().ok(),
             "LNTYPE" => self.ln_type = value.parse().ok(),
-            "LNOBJ" => self.ln_obj = Some(value.to_uppercase()),
+            "LNOBJ" => self.ln_obj = Some(u16::from_str_radix(value, 36).unwrap_or(0)),
             _ if key.starts_with("WAV") || key.starts_with("OGG") => {
                 let audio_id = key[3..].to_string();
-                self.audio_files.insert(audio_id, value.to_string());
+                self.audio_files.insert(u16::from_str_radix(&audio_id, 36).unwrap_or(0), value.to_string());
             }
             _ if key.starts_with("BPM") && key.len() > 3 => {
                 let bpm_id = key[3..].to_string();
@@ -184,7 +186,7 @@ impl Header {
                     && bpm_value.is_finite()
                     && bpm_value > 0.0
                 {
-                    self.bpm_table.insert(bpm_id.to_uppercase(), bpm_value);
+                    self.bpm_table.insert(u16::from_str_radix(&bpm_id, 36).unwrap_or(0), bpm_value);
                 }
             }
             _ if key.starts_with("STOP") => {
@@ -193,7 +195,7 @@ impl Header {
                     && stop_value.is_finite()
                     && stop_value >= 0.0
                 {
-                    self.stop_table.insert(stop_id.to_uppercase(), stop_value);
+                    self.stop_table.insert(u16::from_str_radix(&stop_id, 36).unwrap_or(0), stop_value);
                 }
             }
             _ => (),
@@ -237,7 +239,7 @@ pub struct Message {
     /// Channel identifier.
     pub channel: u8,
     /// Objects appearing in this message line.
-    pub objects: Vec<Object>,
+    pub objects: Vec<ObjectId>,
 }
 
 impl Message {
@@ -263,17 +265,16 @@ impl Message {
         };
 
         let measure: u16 = measure_str.parse().map_err(ParseError::InvalidMeasure)?;
-        let channel: u8 = u8::from_str_radix(channel_str, 36)
-            .unwrap_or_else(|_| channel_str.parse().unwrap_or(0));
+        let channel: u8 = u8::from_str_radix(channel_str, 36).unwrap_or(0);
 
         if objects_str.len() % 2 != 0 {
             return Err(ParseError::InvalidObjectData);
         }
 
-        let mut objects: Vec<Object> = Vec::with_capacity(objects_str.len() / 2);
+        let mut objects: Vec<ObjectId> = Vec::with_capacity(objects_str.len() / 2);
         for chunk in objects_str.as_bytes().chunks(2) {
             let s = std::str::from_utf8(chunk).map_err(|_| ParseError::InvalidObjectData)?;
-            objects.push(Object(s.to_string()));
+            objects.push(u16::from_str_radix(s, 36).unwrap_or(0));
         }
 
         Ok(Message {
@@ -281,17 +282,5 @@ impl Message {
             channel,
             objects,
         })
-    }
-}
-
-/// A 2-character object token.
-#[derive(Debug, Clone)]
-pub struct Object(pub String);
-
-impl std::ops::Deref for Object {
-    type Target = String;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }

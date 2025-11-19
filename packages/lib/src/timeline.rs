@@ -184,25 +184,24 @@ pub fn build_tempo_map(bms: &Bms) -> TempoMap {
         for (i, object) in message.objects.iter().enumerate() {
             let position = (i as f64) / num_objects;
 
+            if *object == 0 {
+                continue;
+            }
+
             match message.channel {
                 3 => {
                     // Channel 03: hex BPM (01-FF)
-                    if !object.as_str().eq_ignore_ascii_case("00")
-                        && let Ok(bpm_int) = u8::from_str_radix(object.as_str(), 16)
-                        && bpm_int > 0
-                    {
-                        tempo_changes.push(RawTempoChange {
-                            measure: message.measure,
-                            position,
-                            bpm: bpm_int as f64,
-                        });
-                    }
+                    let val = *object;
+                    let hex_val = (val / 36) * 16 + (val % 36);
+                    tempo_changes.push(RawTempoChange {
+                        measure: message.measure,
+                        position,
+                        bpm: hex_val as f64,
+                    });
                 }
                 8 => {
                     // Channel 08: BPM table reference
-                    if !object.as_str().eq_ignore_ascii_case("00")
-                        && let Some(&bpm) = bms.header.bpm_table.get(object.as_str())
-                    {
+                    if let Some(&bpm) = bms.header.bpm_table.get(object) {
                         tempo_changes.push(RawTempoChange {
                             measure: message.measure,
                             position,
@@ -235,11 +234,11 @@ pub fn build_tempo_map(bms: &Bms) -> TempoMap {
         }
 
         for (i, object) in message.objects.iter().enumerate() {
-            if object.as_str().eq_ignore_ascii_case("00") {
+            if *object == 0 {
                 continue;
             }
 
-            if let Some(&stop_val) = bms.header.stop_table.get(object.as_str()) {
+            if let Some(&stop_val) = bms.header.stop_table.get(object) {
                 stops.push(StopEvent {
                     measure: message.measure,
                     position: (i as f64) / num_objects,
@@ -455,10 +454,10 @@ pub fn extract_sound_events(
     channels: usize,
 ) -> Vec<SoundEvent> {
     let mut sound_events: Vec<SoundEvent> = vec![];
-    let mut ln_56_active: AHashMap<u16, (String, f64)> = AHashMap::new();
-    let mut ln_56_open_ids: AHashMap<u16, HashSet<String>> = AHashMap::new();
+    let mut ln_active: AHashMap<u16, (String, f64)> = AHashMap::new();
+    let mut ln_open: AHashMap<u16, HashSet<&u16>> = AHashMap::new();
     let mut max_ev_measure: u16 = 0;
-    let ln_end_id_opt: Option<String> = bms.header.ln_obj.clone();
+    let ln_end_id: Option<&u16> = bms.header.ln_obj.as_ref();
     let audio = &bms.header.audio_files;
 
     for message in &bms.messages {
@@ -484,14 +483,14 @@ pub fn extract_sound_events(
             let start_sample = tempo_map.get_timestamp_samples(m, position, sample_rate) * channels;
             if (181..=189).contains(&ch) || (217..=225).contains(&ch) {
                 let ln_type = bms.header.ln_type.unwrap_or(1);
-                let is_zero = object.as_str().eq_ignore_ascii_case("00");
+                let is_zero = *object == 0;
 
                 match ln_type {
                     2 => {
-                        if let Some(ref ln_end_id) = ln_end_id_opt
-                            && object.as_str().eq_ignore_ascii_case(ln_end_id)
+                        if let Some(ln_end_id) = ln_end_id
+                            && object == ln_end_id
                         {
-                            ln_56_active.remove(&ch);
+                            ln_active.remove(&ch);
                             if message.measure > max_ev_measure {
                                 max_ev_measure = message.measure;
                             }
@@ -499,11 +498,11 @@ pub fn extract_sound_events(
                         }
 
                         if !is_zero {
-                            let filename_opt = audio.get(object.as_str()).cloned();
-                            if !ln_56_active.contains_key(&ch)
+                            let filename_opt = audio.get(object).cloned();
+                            if !ln_active.contains_key(&ch)
                                 && let Some(ref filename) = filename_opt
                             {
-                                ln_56_active.insert(ch, (filename.clone(), object_time));
+                                ln_active.insert(ch, (filename.clone(), object_time));
                             }
                             if let Some(filename) = filename_opt
                                 && let Some(&kid) = filename_to_id.get(&filename)
@@ -515,7 +514,7 @@ pub fn extract_sound_events(
                                 });
                             }
                         } else {
-                            ln_56_active.remove(&ch);
+                            ln_active.remove(&ch);
                         }
                     }
                     _ => {
@@ -526,13 +525,12 @@ pub fn extract_sound_events(
                             continue;
                         }
 
-                        let entry = ln_56_open_ids.entry(ch).or_default();
-                        let id = object.to_uppercase();
+                        let entry = ln_open.entry(ch).or_default();
 
-                        if entry.contains(&id) {
-                            entry.remove(&id);
+                        if entry.contains(object) {
+                            entry.remove(object);
                         } else {
-                            if let Some(filename) = audio.get(object.as_str())
+                            if let Some(filename) = audio.get(object)
                                 && let Some(&kid) = filename_to_id.get(filename)
                             {
                                 sound_events.push(SoundEvent {
@@ -541,7 +539,7 @@ pub fn extract_sound_events(
                                     end: None,
                                 });
                             }
-                            entry.insert(id);
+                            entry.insert(object);
                         }
                     }
                 }
@@ -551,7 +549,7 @@ pub fn extract_sound_events(
                 }
                 continue;
             }
-            if let Some(filename) = audio.get(object.as_str())
+            if let Some(filename) = audio.get(object)
                 && let Some(&kid) = filename_to_id.get(filename)
             {
                 sound_events.push(SoundEvent {
@@ -560,7 +558,7 @@ pub fn extract_sound_events(
                     end: None,
                 });
             }
-            if let Some(_filename) = audio.get(object.as_str())
+            if let Some(_filename) = audio.get(object)
                 && message.measure > max_ev_measure
             {
                 max_ev_measure = message.measure;
