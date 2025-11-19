@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-symphonia = { version = "0.5.5", features = ["wav", "ogg", "mp3", "flac", "opt-simd"] }
+symphonia = { version = "0.5.5", features = ["wav", "ogg", "mp3", "flac"] }
 bytemuck = "1.24.0"
 js-sys = "0.3.82"
 rayon = "1.11.0"
@@ -17,6 +17,9 @@ getrandom = { version = "0.3.4", features = ["wasm_js"] }
 ahash = "0.8.12"
 wide = "0.8.2"
 wasm-bindgen = "0.2.105"
+serde = { version = "1.0.228", features = ["derive"] }
+serde-wasm-bindgen = "0.6.5"
+num_enum = "0.7.5"
 
 [profile.release]
 opt-level = "z"

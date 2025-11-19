@@ -1,4 +1,3 @@
-use crate::audio::{MIX_CH, MIX_SR};
 use crate::timeline::SoundEvent;
 use ahash::AHashMap;
 use rayon::prelude::*;
@@ -32,18 +31,23 @@ pub struct Prepared {
 ///
 /// * `sound_events` - Timeline events to prepare.
 /// * `decoded` - Decoded audio sources.
+/// * `channels` - Number of output channels.
 ///
 /// # Returns
 ///
 /// * `Prepared` - Result containing validated, sorted, non‑overlapping `EventRef`s for mixing and total output length.
-pub fn prepare_events(sound_events: &[SoundEvent], decoded: &[(Vec<f32>, usize)]) -> Prepared {
+pub fn prepare_events(
+    sound_events: &[SoundEvent],
+    decoded: &[(Vec<f32>, usize)],
+    channels: usize,
+) -> Prepared {
     let mut pre_events: Vec<EventRef> = Vec::with_capacity(sound_events.len());
     let mut total_len: usize = 0;
     for ev in sound_events {
         let kid = ev.key_id;
         let (_buf, frames) = &decoded[kid];
         let start_sample = ev.start;
-        let natural_end = start_sample + (*frames) * MIX_CH;
+        let natural_end = start_sample + (*frames) * channels;
         let end_sample = ev.end.unwrap_or(natural_end);
         if end_sample > start_sample {
             pre_events.push(EventRef {
@@ -89,13 +93,20 @@ pub fn prepare_events(sound_events: &[SoundEvent], decoded: &[(Vec<f32>, usize)]
 ///
 /// * `events` - Events to group.
 /// * `total_len` - Total output length.
+/// * `sample_rate` - Target sample rate.
+/// * `channels` - Number of output channels.
 ///
 /// # Returns
 ///
 /// * `(chunk_count, buckets)` where `buckets[c]` contains indices of events
-///   that intersect chunk `c`. Chunk size is 1 second of samples (`MIX_SR * MIX_CH`).
-pub fn bucketize_events(events: &[EventRef], total_len: usize) -> (usize, Vec<Vec<usize>>) {
-    let chunk_samples = MIX_SR as usize * MIX_CH * CHUNK_SIZE_SECONDS;
+///   that intersect chunk `c`. Chunk size is 1 second of samples.
+pub fn bucketize_events(
+    events: &[EventRef],
+    total_len: usize,
+    sample_rate: u32,
+    channels: usize,
+) -> (usize, Vec<Vec<usize>>) {
+    let chunk_samples = sample_rate as usize * channels * CHUNK_SIZE_SECONDS;
     let chunk_count = total_len.div_ceil(chunk_samples);
     let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); chunk_count];
     for (idx, ev) in events.iter().enumerate() {
@@ -133,6 +144,8 @@ pub struct OverlapSlice {
 /// * `decoded` - Decoded audio sources.
 /// * `bucketed` - Events grouped into chunks.
 /// * `total_len` - Total output length.
+/// * `sample_rate` - Target sample rate.
+/// * `channels` - Number of output channels.
 ///
 /// # Returns
 ///
@@ -142,8 +155,10 @@ pub fn precompute_overlaps(
     decoded: &[(Vec<f32>, usize)],
     bucketed: &[Vec<usize>],
     total_len: usize,
+    sample_rate: u32,
+    channels: usize,
 ) -> Vec<Vec<OverlapSlice>> {
-    let chunk_samples = MIX_SR as usize * MIX_CH * CHUNK_SIZE_SECONDS;
+    let chunk_samples = sample_rate as usize * channels * CHUNK_SIZE_SECONDS;
     let chunk_count = bucketed.len();
 
     let src_lens: Vec<usize> = decoded.iter().map(|(v, _)| v.len()).collect();
@@ -186,6 +201,9 @@ pub fn precompute_overlaps(
 /// * `events` - Events to process.
 /// * `decoded` - Decoded audio sources.
 /// * `precomputed` - Overlap slices for each chunk.
+/// * `total_len` - Total output length.
+/// * `sample_rate` - Target sample rate.
+/// * `channels` - Number of output channels.
 ///
 /// # Returns
 ///
@@ -196,8 +214,10 @@ pub fn mix_chunk(
     decoded: &[(Vec<f32>, usize)],
     precomputed: &[Vec<OverlapSlice>],
     total_len: usize,
+    sample_rate: u32,
+    channels: usize,
 ) -> Vec<f32> {
-    let chunk_samples = MIX_SR as usize * MIX_CH * CHUNK_SIZE_SECONDS;
+    let chunk_samples = sample_rate as usize * channels * CHUNK_SIZE_SECONDS;
     let start = ci * chunk_samples;
     let end = std::cmp::min(start + chunk_samples, total_len);
     let mut buf = vec![0.0f32; end - start];

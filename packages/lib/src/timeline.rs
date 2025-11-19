@@ -1,4 +1,3 @@
-use crate::audio::{MIX_CH, MIX_SR};
 use crate::bms::Bms;
 use ahash::AHashMap;
 use std::collections::HashSet;
@@ -111,12 +110,13 @@ impl TempoMap {
     ///
     /// * `measure` - Target measure index.
     /// * `position` - Position within the measure.
+    /// * `sample_rate` - Target sample rate.
     ///
     /// # Returns
     ///
-    /// * `usize` - Timestamp in samples at the current mix sample rate.
-    pub fn get_timestamp_samples(&self, measure: u16, position: f64) -> usize {
-        (self.get_timestamp(measure, position) * MIX_SR as f64).round() as usize
+    /// * `usize` - Timestamp in samples at the given sample rate.
+    pub fn get_timestamp_samples(&self, measure: u16, position: f64, sample_rate: u32) -> usize {
+        (self.get_timestamp(measure, position) * sample_rate as f64).round() as usize
     }
 }
 
@@ -441,6 +441,8 @@ fn calculate_time_between(
 /// * `bms` - Parsed BMS data.
 /// * `tempo_map` - Precomputed tempo map for time conversion.
 /// * `filename_to_id` - Mapping from audio filename to decoded buffer id.
+/// * `sample_rate` - Target sample rate.
+/// * `channels` - Target number of channels.
 ///
 /// # Returns
 ///
@@ -449,6 +451,8 @@ pub fn extract_sound_events(
     bms: &Bms,
     tempo_map: &TempoMap,
     filename_to_id: &AHashMap<String, usize>,
+    sample_rate: u32,
+    channels: usize,
 ) -> Vec<SoundEvent> {
     let mut sound_events: Vec<SoundEvent> = vec![];
     let mut ln_56_active: AHashMap<u16, (String, f64)> = AHashMap::new();
@@ -477,7 +481,7 @@ pub fn extract_sound_events(
             let m = message.measure;
             let position = i as f64 / num_objects;
             let object_time = tempo_map.get_timestamp(m, position);
-            let start_sample = tempo_map.get_timestamp_samples(m, position) * MIX_CH;
+            let start_sample = tempo_map.get_timestamp_samples(m, position, sample_rate) * channels;
             if (181..=189).contains(&ch) || (217..=225).contains(&ch) {
                 let ln_type = bms.header.ln_type.unwrap_or(1);
                 let is_zero = object.as_str().eq_ignore_ascii_case("00");
