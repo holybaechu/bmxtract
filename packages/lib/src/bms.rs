@@ -178,7 +178,10 @@ impl Header {
             "LNOBJ" => self.ln_obj = Some(u16::from_str_radix(value, 36).unwrap_or(0)),
             _ if key.starts_with("WAV") || key.starts_with("OGG") => {
                 let audio_id = key[3..].to_string();
-                self.audio_files.insert(u16::from_str_radix(&audio_id, 36).unwrap_or(0), value.to_string());
+                self.audio_files.insert(
+                    u16::from_str_radix(&audio_id, 36).unwrap_or(0),
+                    value.to_string(),
+                );
             }
             _ if key.starts_with("BPM") && key.len() > 3 => {
                 let bpm_id = key[3..].to_string();
@@ -186,7 +189,8 @@ impl Header {
                     && bpm_value.is_finite()
                     && bpm_value > 0.0
                 {
-                    self.bpm_table.insert(u16::from_str_radix(&bpm_id, 36).unwrap_or(0), bpm_value);
+                    self.bpm_table
+                        .insert(u16::from_str_radix(&bpm_id, 36).unwrap_or(0), bpm_value);
                 }
             }
             _ if key.starts_with("STOP") => {
@@ -195,7 +199,8 @@ impl Header {
                     && stop_value.is_finite()
                     && stop_value >= 0.0
                 {
-                    self.stop_table.insert(u16::from_str_radix(&stop_id, 36).unwrap_or(0), stop_value);
+                    self.stop_table
+                        .insert(u16::from_str_radix(&stop_id, 36).unwrap_or(0), stop_value);
                 }
             }
             _ => (),

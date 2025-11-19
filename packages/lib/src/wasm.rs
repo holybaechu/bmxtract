@@ -76,7 +76,8 @@ impl<'de> Deserialize<'de> for ResampleMethod {
             where
                 E: serde::de::Error,
             {
-                ResampleMethod::try_from(value as u8).map_err(|_| E::custom("Invalid ResampleQuality"))
+                ResampleMethod::try_from(value as u8)
+                    .map_err(|_| E::custom("Invalid ResampleQuality"))
             }
         }
 

@@ -1,3 +1,5 @@
+use crate::wasm::ResampleMethod;
+use rubato::{FastFixedIn, Resampler};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::Arc;
 use symphonia::core::audio::{AudioBufferRef, Signal, SignalSpec};
@@ -8,8 +10,6 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptio
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use wide::f32x8;
-use rubato::{Resampler, FastFixedIn};
-use crate::wasm::ResampleMethod;
 
 pub const MIX_SR: u32 = 44100;
 pub const MIX_CH: usize = 2;
@@ -143,20 +143,22 @@ pub fn decode_audio(
                         rubato::PolynomialDegree::Septic,
                         frames,
                         chans,
-                    ).map_err(|e| format!("Failed to create resampler: {}", e)).unwrap();
+                    )
+                    .map_err(|e| format!("Failed to create resampler: {}", e))
+                    .unwrap();
 
                     let resampled = resampler.process(&input_frames, None).unwrap();
-                    
+
                     let out_len = resampled[0].len();
                     out_resampled.reserve(out_len * target_ch);
-                    
+
                     if chans > 1 {
                         for i in 0..out_len {
                             out_resampled.push(resampled[0][i]);
                             out_resampled.push(resampled[1][i]);
                         }
                     } else {
-                         for i in 0..out_len {
+                        for i in 0..out_len {
                             out_resampled.push(resampled[0][i]);
                             out_resampled.push(resampled[0][i]);
                         }
