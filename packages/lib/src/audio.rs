@@ -2,17 +2,13 @@ use crate::wasm::ResampleMethod;
 use rubato::{FastFixedIn, Resampler};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::Arc;
-use symphonia::core::audio::{AudioBufferRef, Signal, SignalSpec};
+use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use wide::f32x8;
-
-pub const MIX_SR: u32 = 44100;
-pub const MIX_CH: usize = 2;
 
 /// Decode audio from a buffer of bytes
 ///
@@ -42,192 +38,109 @@ pub fn decode_audio(
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|e| format!("decoder create error: {}", e))?;
 
-    let mut out_resampled: Vec<f32> = Vec::new();
-    let mut src_spec: Option<SignalSpec> = None;
     let mut src_rate: Option<u32> = track.codec_params.sample_rate;
     let mut channels: usize = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
-    let mut step_opt: Option<f32> = None;
-    let mut pos: f32 = 0.0;
-    let mut prev_l: f32 = 0.0;
-    let mut prev_r: f32 = 0.0;
-    let mut have_prev: bool = false;
-    let mut scratch: Vec<f32> = Vec::new();
-
-    #[inline]
-    fn init_from_spec(
-        spec: &SignalSpec,
-        src_spec: &mut Option<SignalSpec>,
-        src_rate: &mut Option<u32>,
-        channels: &mut usize,
-    ) {
-        if src_spec.is_none() {
-            *src_spec = Some(*spec);
-            *channels = spec.channels.count();
-            if src_rate.is_none() {
-                *src_rate = Some(spec.rate);
-            }
-        }
-    }
-
-    macro_rules! process_buffer {
-        ($buf:expr, $convert:expr) => {{
-            init_from_spec($buf.spec(), &mut src_spec, &mut src_rate, &mut channels);
-            let chans = $buf.spec().channels.count();
-            let frames = $buf.frames();
-            let step = *step_opt.get_or_insert_with(|| {
-                let sr = src_rate.unwrap_or(target_sr);
-                sr as f32 / target_sr as f32
-            });
-            let ratio = *step_opt.get_or_insert_with(|| {
-                let sr = src_rate.unwrap_or(target_sr);
-                target_sr as f32 / sr as f32
-            });
-            let c0 = $buf.chan(0);
-
-            if (step - 1.0).abs() < 1e-8 {
-                // No resampling needed
-                out_resampled.reserve(frames * target_ch);
-                if chans > 1 {
-                    let c1 = $buf.chan(1);
-                    for (l_val, r_val) in c0.iter().zip(c1.iter()).take(frames) {
-                        let l = $convert(*l_val);
-                        let r = $convert(*r_val);
-                        out_resampled.push(l);
-                        out_resampled.push(r);
-                    }
-                } else {
-                    for l_val in c0.iter().take(frames) {
-                        let l = $convert(*l_val);
-                        out_resampled.push(l);
-                        out_resampled.push(l);
-                    }
-                }
-                have_prev = false;
-                pos = 0.0;
-            } else if matches!(quality, ResampleMethod::Sinc) {
-                let sr = src_rate.unwrap_or(target_sr);
-                if sr == target_sr {
-                    out_resampled.reserve(frames * target_ch);
-                    if chans > 1 {
-                        let c1 = $buf.chan(1);
-                        for (l_val, r_val) in c0.iter().zip(c1.iter()).take(frames) {
-                            let l = $convert(*l_val);
-                            let r = $convert(*r_val);
-                            out_resampled.push(l);
-                            out_resampled.push(r);
-                        }
-                    } else {
-                        for l_val in c0.iter().take(frames) {
-                            let l = $convert(*l_val);
-                            out_resampled.push(l);
-                            out_resampled.push(l);
-                        }
-                    }
-                } else {
-                    let mut input_frames: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); chans];
-                    if chans > 1 {
-                        let c1 = $buf.chan(1);
-                        for (l_val, r_val) in c0.iter().zip(c1.iter()).take(frames) {
-                            input_frames[0].push($convert(*l_val));
-                            input_frames[1].push($convert(*r_val));
-                        }
-                    } else {
-                        for l_val in c0.iter().take(frames) {
-                            input_frames[0].push($convert(*l_val));
-                        }
-                    }
-
-                    let mut resampler = FastFixedIn::<f32>::new(
-                        ratio as f64,
-                        1.0,
-                        rubato::PolynomialDegree::Septic,
-                        frames,
-                        chans,
-                    )
-                    .map_err(|e| format!("Failed to create resampler: {}", e))
-                    .unwrap();
-
-                    let resampled = resampler.process(&input_frames, None).unwrap();
-
-                    let out_len = resampled[0].len();
-                    out_resampled.reserve(out_len * target_ch);
-
-                    if chans > 1 {
-                        for i in 0..out_len {
-                            out_resampled.push(resampled[0][i]);
-                            out_resampled.push(resampled[1][i]);
-                        }
-                    } else {
-                        for i in 0..out_len {
-                            out_resampled.push(resampled[0][i]);
-                            out_resampled.push(resampled[0][i]);
-                        }
-                    }
-                }
-            } else if chans > 1 {
-                let c1 = $buf.chan(1);
-                scratch.clear();
-                scratch.reserve((frames + if have_prev { 1 } else { 0 }) * target_ch);
-                if have_prev {
-                    scratch.push(prev_l);
-                    scratch.push(prev_r);
-                }
-                for (l_val, r_val) in c0.iter().zip(c1.iter()).take(frames) {
-                    let l = $convert(*l_val);
-                    let r = $convert(*r_val);
-                    scratch.push(l);
-                    scratch.push(r);
-                }
-                resample_interleaved(&scratch, &mut out_resampled, &mut pos, step, target_ch);
-                let last_idx = scratch.len() - target_ch;
-                prev_l = scratch[last_idx];
-                prev_r = scratch[last_idx + 1];
-                have_prev = true;
-                pos -= frames as f32;
-            } else {
-                scratch.clear();
-                scratch.reserve(frames + if have_prev { 1 } else { 0 });
-                if have_prev {
-                    scratch.push(prev_l);
-                }
-                for l_val in c0.iter().take(frames) {
-                    scratch.push($convert(*l_val));
-                }
-                resample_mono(&scratch, &mut out_resampled, &mut pos, step, target_ch);
-                prev_l = scratch[scratch.len() - 1];
-                have_prev = true;
-                pos -= frames as f32;
-            }
-        }};
-    }
+    
+    let mut source_samples: Vec<f32> = Vec::new();
 
     loop {
         match format.next_packet() {
             Ok(packet) => match decoder.decode(&packet) {
-                Ok(audio_buf) => match audio_buf {
-                    AudioBufferRef::U8(buf) => {
-                        process_buffer!(buf, |v: u8| (v as f32 / 255.0) * 2.0 - 1.0);
+                Ok(audio_buf) => {
+                    if src_rate.is_none() {
+                        src_rate = Some(audio_buf.spec().rate);
                     }
-                    AudioBufferRef::U16(buf) => {
-                        let scale = 2.0 / u16::MAX as f32;
-                        process_buffer!(buf, |v: u16| v as f32 * scale - 1.0);
+                    if channels == 0 {
+                        channels = audio_buf.spec().channels.count();
                     }
-                    AudioBufferRef::S16(buf) => {
-                        let scale = 1.0 / i16::MAX as f32;
-                        process_buffer!(buf, |v: i16| v as f32 * scale);
+
+                    match audio_buf {
+                        AudioBufferRef::U8(buf) => {
+                            let chans = buf.spec().channels.count();
+                            if chans == 1 {
+                                for &v in buf.chan(0) {
+                                    source_samples.push((v as f32 / 255.0) * 2.0 - 1.0);
+                                }
+                            } else {
+                                let c0 = buf.chan(0);
+                                let c1 = buf.chan(1);
+                                for (l, r) in c0.iter().zip(c1.iter()) {
+                                    source_samples.push((*l as f32 / 255.0) * 2.0 - 1.0);
+                                    source_samples.push((*r as f32 / 255.0) * 2.0 - 1.0);
+                                }
+                            }
+                        }
+                        AudioBufferRef::U16(buf) => {
+                            let scale = 2.0 / u16::MAX as f32;
+                            let chans = buf.spec().channels.count();
+                            if chans == 1 {
+                                for &v in buf.chan(0) { source_samples.push(v as f32 * scale - 1.0); }
+                            } else {
+                                let c0 = buf.chan(0);
+                                let c1 = buf.chan(1);
+                                for (l, r) in c0.iter().zip(c1.iter()) {
+                                    source_samples.push(*l as f32 * scale - 1.0);
+                                    source_samples.push(*r as f32 * scale - 1.0);
+                                }
+                            }
+                        }
+                        AudioBufferRef::S16(buf) => {
+                            let scale = 1.0 / i16::MAX as f32;
+                            let chans = buf.spec().channels.count();
+                            if chans == 1 {
+                                for &v in buf.chan(0) { source_samples.push(v as f32 * scale); }
+                            } else {
+                                let c0 = buf.chan(0);
+                                let c1 = buf.chan(1);
+                                for (l, r) in c0.iter().zip(c1.iter()) {
+                                    source_samples.push(*l as f32 * scale);
+                                    source_samples.push(*r as f32 * scale);
+                                }
+                            }
+                        }
+                        AudioBufferRef::S32(buf) => {
+                            let scale = 1.0 / i32::MAX as f32;
+                            let chans = buf.spec().channels.count();
+                            if chans == 1 {
+                                for &v in buf.chan(0) { source_samples.push(v as f32 * scale); }
+                            } else {
+                                let c0 = buf.chan(0);
+                                let c1 = buf.chan(1);
+                                for (l, r) in c0.iter().zip(c1.iter()) {
+                                    source_samples.push(*l as f32 * scale);
+                                    source_samples.push(*r as f32 * scale);
+                                }
+                            }
+                        }
+                        AudioBufferRef::F32(buf) => {
+                            let chans = buf.spec().channels.count();
+                            if chans == 1 {
+                                source_samples.extend_from_slice(buf.chan(0));
+                            } else {
+                                let c0 = buf.chan(0);
+                                let c1 = buf.chan(1);
+                                for (l, r) in c0.iter().zip(c1.iter()) {
+                                    source_samples.push(*l);
+                                    source_samples.push(*r);
+                                }
+                            }
+                        }
+                        AudioBufferRef::F64(buf) => {
+                            let chans = buf.spec().channels.count();
+                            if chans == 1 {
+                                for &v in buf.chan(0) { source_samples.push(v as f32); }
+                            } else {
+                                let c0 = buf.chan(0);
+                                let c1 = buf.chan(1);
+                                for (l, r) in c0.iter().zip(c1.iter()) {
+                                    source_samples.push(*l as f32);
+                                    source_samples.push(*r as f32);
+                                }
+                            }
+                        }
+                        _ => return Err("unsupported sample format".to_string()),
                     }
-                    AudioBufferRef::S32(buf) => {
-                        let scale = 1.0 / i32::MAX as f32;
-                        process_buffer!(buf, |v: i32| v as f32 * scale);
-                    }
-                    AudioBufferRef::F32(buf) => {
-                        process_buffer!(buf, |v: f32| v);
-                    }
-                    AudioBufferRef::F64(buf) => {
-                        process_buffer!(buf, |v: f64| v as f32);
-                    }
-                    _ => return Err("unsupported sample format".to_string()),
-                },
+                }
                 Err(SymphoniaError::DecodeError(_)) => continue,
                 Err(e) => return Err(format!("decode error: {}", e)),
             },
@@ -239,164 +152,191 @@ pub fn decode_audio(
     }
 
     let src_sr = src_rate.unwrap_or(target_sr);
-    if (src_sr == target_sr) && !out_resampled.is_empty() {
-        let out_frames = out_resampled.len() / target_ch;
-        return Ok((out_resampled, out_frames));
-    }
+    
+    // Perform resampling
+    let out_resampled = if src_sr == target_sr {
+        // No resampling needed, just channel conversion
+        convert_channels(&source_samples, channels, target_ch)
+    } else {
+        match quality {
+            ResampleMethod::Linear => {
+                resample_linear(&source_samples, src_sr, channels, target_sr, target_ch)
+            },
+            ResampleMethod::Sinc => {
+                resample_sinc(&source_samples, src_sr, channels, target_sr, target_ch)?
+            }
+        }
+    };
+
     let out_frames = out_resampled.len() / target_ch;
     Ok((out_resampled, out_frames))
 }
 
-fn resample_interleaved(
-    scratch: &[f32],
-    out: &mut Vec<f32>,
-    pos: &mut f32,
-    step: f32,
-    target_ch: usize,
-) {
-    if scratch.len() < target_ch {
-        return;
+fn convert_channels(input: &[f32], src_ch: usize, target_ch: usize) -> Vec<f32> {
+    if src_ch == target_ch {
+        return input.to_vec();
     }
-    let avail_frames = scratch.len() / target_ch;
-    let last = (avail_frames - 1) as f32;
-    if *pos <= last {
-        let est = (((last - *pos) / step).floor() as isize + 1).max(0) as usize;
-        out.reserve(est * target_ch);
+    
+    let frames = input.len() / src_ch;
+    let mut out = Vec::with_capacity(frames * target_ch);
+    
+    if src_ch == 1 && target_ch == 2 {
+        for &s in input {
+            out.push(s);
+            out.push(s);
+        }
+    } else if src_ch == 2 && target_ch == 1 {
+        for chunk in input.chunks(2) {
+            out.push((chunk[0] + chunk[1]) * 0.5);
+        }
+    } else {
+         for chunk in input.chunks(src_ch) {
+            for i in 0..target_ch {
+                if i < src_ch {
+                    out.push(chunk[i]);
+                } else {
+                    out.push(0.0);
+                }
+            }
+        }
     }
-    while *pos + step * 7.0 <= last {
-        let mut tpos = [0.0f32; 8];
-        for (k, item) in tpos.iter_mut().enumerate() {
-            *item = *pos + step * k as f32;
-        }
-        let mut frac_arr = [0.0f32; 8];
-        let mut i0_arr = [0usize; 8];
-        let mut i1_arr = [0usize; 8];
-        for k in 0..8 {
-            let p = tpos[k];
-            let i0 = p.floor() as usize;
-            let i1 = if i0 + 1 < avail_frames { i0 + 1 } else { i0 };
-            i0_arr[k] = i0;
-            i1_arr[k] = i1;
-            frac_arr[k] = p - (i0 as f32);
-        }
-        let mut l0 = [0.0f32; 8];
-        let mut l1 = [0.0f32; 8];
-        let mut r0 = [0.0f32; 8];
-        let mut r1 = [0.0f32; 8];
-        for (k, ((l0_val, l1_val), (r0_val, r1_val))) in l0
-            .iter_mut()
-            .zip(l1.iter_mut())
-            .zip(r0.iter_mut().zip(r1.iter_mut()))
-            .enumerate()
-        {
-            let b0 = i0_arr[k] * target_ch;
-            let b1 = i1_arr[k] * target_ch;
-            *l0_val = scratch[b0];
-            *r0_val = if target_ch > 1 {
-                scratch[b0 + 1]
-            } else {
-                scratch[b0]
-            };
-            *l1_val = scratch[b1];
-            *r1_val = if target_ch > 1 {
-                scratch[b1 + 1]
-            } else {
-                scratch[b1]
-            };
-        }
-        let l0v = f32x8::from(l0);
-        let l1v = f32x8::from(l1);
-        let r0v = f32x8::from(r0);
-        let r1v = f32x8::from(r1);
-        let fv = f32x8::from(frac_arr);
-        let lv = l0v + (l1v - l0v) * fv;
-        let rv = r0v + (r1v - r0v) * fv;
-        let larr: [f32; 8] = lv.into();
-        let rarr: [f32; 8] = rv.into();
-        for (l, r) in larr.iter().zip(rarr.iter()) {
-            out.push(*l);
-            out.push(*r);
-        }
-        *pos += step * 8.0;
-    }
-    while *pos <= last {
-        let i0 = (*pos).floor() as usize;
-        let i1 = if i0 + 1 < avail_frames { i0 + 1 } else { i0 };
-        let frac = *pos - (i0 as f32);
-        let b0 = i0 * target_ch;
-        let b1 = i1 * target_ch;
-        let l0 = scratch[b0];
-        let r0 = if target_ch > 1 {
-            scratch[b0 + 1]
-        } else {
-            scratch[b0]
-        };
-        let l1 = scratch[b1];
-        let r1 = if target_ch > 1 {
-            scratch[b1 + 1]
-        } else {
-            scratch[b1]
-        };
-        out.push(l0 + (l1 - l0) * frac);
-        out.push(r0 + (r1 - r0) * frac);
-        *pos += step;
-    }
+    out
 }
 
-fn resample_mono(scratch: &[f32], out: &mut Vec<f32>, pos: &mut f32, step: f32, target_ch: usize) {
-    if scratch.is_empty() {
-        return;
-    }
-    let avail_frames = scratch.len();
-    let last = (avail_frames - 1) as f32;
-    if *pos <= last {
-        let est = (((last - *pos) / step).floor() as isize + 1).max(0) as usize;
-        out.reserve(est * target_ch);
-    }
-    while *pos + step * 7.0 <= last {
-        let mut tpos = [0.0f32; 8];
-        for (k, item) in tpos.iter_mut().enumerate() {
-            *item = *pos + step * k as f32;
+fn resample_linear(
+    input: &[f32],
+    src_sr: u32,
+    src_ch: usize,
+    target_sr: u32,
+    target_ch: usize,
+) -> Vec<f32> {
+    let mut out = Vec::new();
+    let step = src_sr as f32 / target_sr as f32;
+    let mut pos = 0.0;
+    
+    let frames = input.len() / src_ch;
+    let out_frames = (frames as f32 / step).ceil() as usize;
+    out.reserve(out_frames * target_ch);
+    
+    let last_frame = (frames - 1) as f32;
+    
+    while pos <= last_frame {
+        let i0 = pos.floor() as usize;
+        let i1 = (i0 + 1).min(frames - 1);
+        let frac = pos - i0 as f32;
+        
+        let base0 = i0 * src_ch;
+        let base1 = i1 * src_ch;
+        
+        if target_ch == 2 {
+            let l0 = input[base0];
+            let r0 = if src_ch > 1 { input[base0 + 1] } else { l0 };
+            
+            let l1 = input[base1];
+            let r1 = if src_ch > 1 { input[base1 + 1] } else { l1 };
+            
+            out.push(l0 + (l1 - l0) * frac);
+            out.push(r0 + (r1 - r0) * frac);
+        } else {
+            // Target Mono
+             let l0 = input[base0];
+             let val0 = if src_ch > 1 { (l0 + input[base0 + 1]) * 0.5 } else { l0 };
+             
+             let l1 = input[base1];
+             let val1 = if src_ch > 1 { (l1 + input[base1 + 1]) * 0.5 } else { l1 };
+             
+             out.push(val0 + (val1 - val0) * frac);
         }
-        let mut frac_arr = [0.0f32; 8];
-        let mut i0_arr = [0usize; 8];
-        let mut i1_arr = [0usize; 8];
-        for k in 0..8 {
-            let p = tpos[k];
-            let i0 = p.floor() as usize;
-            let i1 = if i0 + 1 < avail_frames { i0 + 1 } else { i0 };
-            i0_arr[k] = i0;
-            i1_arr[k] = i1;
-            frac_arr[k] = p - (i0 as f32);
-        }
-        let mut s0 = [0.0f32; 8];
-        let mut s1 = [0.0f32; 8];
-        for (k, (s0_val, s1_val)) in s0.iter_mut().zip(s1.iter_mut()).enumerate() {
-            *s0_val = scratch[i0_arr[k]];
-            *s1_val = scratch[i1_arr[k]];
-        }
-        let s0v = f32x8::from(s0);
-        let s1v = f32x8::from(s1);
-        let fv = f32x8::from(frac_arr);
-        let sv = s0v + (s1v - s0v) * fv;
-        let sarr: [f32; 8] = sv.into();
-        for s in &sarr {
-            out.push(*s);
-            out.push(*s);
-        }
-        *pos += step * 8.0;
+        
+        pos += step;
     }
-    while *pos <= last {
-        let i0 = (*pos).floor() as usize;
-        let i1 = if i0 + 1 < avail_frames { i0 + 1 } else { i0 };
-        let frac = *pos - (i0 as f32);
-        let s0 = scratch[i0];
-        let s1 = scratch[i1];
-        let v = s0 + (s1 - s0) * frac;
-        out.push(v);
-        out.push(v);
-        *pos += step;
+    
+    out
+}
+
+fn resample_sinc(
+    input: &[f32],
+    src_sr: u32,
+    src_ch: usize,
+    target_sr: u32,
+    target_ch: usize,
+) -> Result<Vec<f32>, String> {
+    let ratio = target_sr as f64 / src_sr as f64;
+    let frames = input.len() / src_ch;
+    
+    // De-interleave to planar
+    let mut planar_in = vec![Vec::with_capacity(frames); src_ch];
+    if src_ch == 1 {
+        planar_in[0].extend_from_slice(input);
+    } else {
+        for chunk in input.chunks(src_ch) {
+            planar_in[0].push(chunk[0]);
+            planar_in[1].push(chunk[1]);
+        }
     }
+    
+    let chunk_size = 1024;
+    let mut resampler = FastFixedIn::<f32>::new(
+        ratio,
+        1.0,
+        rubato::PolynomialDegree::Septic,
+        chunk_size,
+        src_ch,
+    ).map_err(|e| format!("Failed to create resampler: {}", e))?;
+    
+    let mut planar_out = vec![Vec::new(); src_ch];
+    let num_chunks = frames / chunk_size;
+    
+    // Process full chunks
+    for i in 0..num_chunks {
+        let start = i * chunk_size;
+        let end = start + chunk_size;
+        let mut chunk_in = vec![Vec::with_capacity(chunk_size); src_ch];
+        for c in 0..src_ch {
+            chunk_in[c].extend_from_slice(&planar_in[c][start..end]);
+        }
+        
+        let chunk_out = resampler.process(&chunk_in, None).map_err(|e| format!("Resampling error: {}", e))?;
+        for c in 0..src_ch {
+            planar_out[c].extend_from_slice(&chunk_out[c]);
+        }
+    }
+    
+    // Handle remainder
+    let remainder = frames % chunk_size;
+    if remainder > 0 {
+        let start = num_chunks * chunk_size;
+        let mut chunk_in = vec![vec![0.0; chunk_size]; src_ch];
+        for c in 0..src_ch {
+            let slice = &planar_in[c][start..];
+            chunk_in[c][..slice.len()].copy_from_slice(slice);
+        }
+        
+        let chunk_out = resampler.process(&chunk_in, None).map_err(|e| format!("Resampling error: {}", e))?;
+        
+         for c in 0..src_ch {
+            planar_out[c].extend_from_slice(&chunk_out[c]);
+        }
+    }
+    
+    // Interleave and convert channels
+    let out_frames = planar_out[0].len();
+    let mut out = Vec::with_capacity(out_frames * target_ch);
+    
+    for i in 0..out_frames {
+        if target_ch == 2 {
+            let l = planar_out[0][i];
+            let r = if src_ch > 1 { planar_out[1][i] } else { l };
+            out.push(l);
+            out.push(r);
+        } else {
+            let l = planar_out[0][i];
+            let val = if src_ch > 1 { (l + planar_out[1][i]) * 0.5 } else { l };
+            out.push(val);
+        }
+    }
+    
+    Ok(out)
 }
 
 fn probe_with_fallback(
