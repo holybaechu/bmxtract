@@ -7,7 +7,7 @@ import {
   createGetManyBytes,
   concatenateChunks,
 } from "./utils/workerHelpers";
-import { AudioOptions, convert_bms_to_wav, SampleFormat } from "@bmxtract/lib";
+import { AudioOptions, convert_bms_to_wav, SampleFormat, ResampleMethod } from "@bmxtract/lib";
 
 log.debug("Started worker.");
 
@@ -126,6 +126,7 @@ sw.onmessage = async (ev: MessageEvent<Message>) => {
               audioOptions.sampleRate,
               audioOptions.bitsPerSample,
               audioOptions.sampleFormat === "float" ? SampleFormat.Float : SampleFormat.Int,
+              audioOptions.resampleQuality === "sinc" ? ResampleMethod.Sinc : ResampleMethod.Linear,
             ),
             onProgress,
             onChunk,

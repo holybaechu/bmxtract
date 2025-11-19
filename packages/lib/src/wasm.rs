@@ -51,12 +51,47 @@ impl<'de> Deserialize<'de> for SampleFormat {
 }
 
 #[wasm_bindgen]
+#[repr(u8)]
+#[derive(Copy, Clone, TryFromPrimitive, Serialize)]
+pub enum ResampleMethod {
+    Linear,
+    Sinc,
+}
+
+impl<'de> Deserialize<'de> for ResampleMethod {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ResampleQualityVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ResampleQualityVisitor {
+            type Value = ResampleMethod;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an i64")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ResampleMethod::try_from(value as u8).map_err(|_| E::custom("Invalid ResampleQuality"))
+            }
+        }
+
+        deserializer.deserialize_any(ResampleQualityVisitor)
+    }
+}
+
+#[wasm_bindgen]
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct AudioOptions {
     channels: u16,
     sample_rate: u32,
     bits_per_sample: u16,
     sample_format: SampleFormat,
+    resample_quality: ResampleMethod,
 }
 
 #[wasm_bindgen]
@@ -67,12 +102,14 @@ impl AudioOptions {
         sample_rate: u32,
         bits_per_sample: u16,
         sample_format: SampleFormat,
+        resample_quality: ResampleMethod,
     ) -> Self {
         Self {
             channels,
             sample_rate,
             bits_per_sample,
             sample_format,
+            resample_quality,
         }
     }
 
@@ -94,6 +131,11 @@ impl AudioOptions {
     #[wasm_bindgen(getter)]
     pub fn sample_format(&self) -> SampleFormat {
         self.sample_format
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn resample_quality(&self) -> ResampleMethod {
+        self.resample_quality
     }
 }
 
@@ -191,6 +233,7 @@ pub async fn convert_bms_to_wav(
 
     let channels = audio_options.channels() as usize;
     let sample_rate = audio_options.sample_rate();
+    let resample_quality = audio_options.resample_quality();
     let sound_events =
         extract_sound_events(&bms, &tempo_map, &filename_to_id, sample_rate, channels);
     if sound_events.is_empty() {
@@ -247,7 +290,7 @@ pub async fn convert_bms_to_wav(
     let results: Vec<DecodeResult> = inputs
         .into_par_iter()
         .map(|(id, bytes)| {
-            crate::audio::decode_audio(bytes, sample_rate, channels)
+            crate::audio::decode_audio(bytes, sample_rate, channels, resample_quality)
                 .map_err(|e| format!("Error while decoding {}: {}", filenames[id], e))
                 .map(|r| (id, r))
         })

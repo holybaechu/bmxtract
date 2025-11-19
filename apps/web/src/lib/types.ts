@@ -32,6 +32,7 @@ type MessagePayloadMap = {
       sampleRate: number;
       bitsPerSample: number;
       sampleFormat: "int" | "float";
+      resampleQuality: "linear" | "sinc";
     };
   };
   [MessageType.READ_FILES_RESPONSE]: {

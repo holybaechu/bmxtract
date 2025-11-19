@@ -59,6 +59,31 @@
     sampleFormatOptions.find((option) => option.label === sampleFormat) ?? sampleFormatOptions[0],
   );
 
+  type ResampleQualityOption = {
+    label: string;
+    detail: string;
+    value: "linear" | "sinc";
+  };
+
+  const resampleQualityOptions: ResampleQualityOption[] = [
+    {
+      label: "Linear",
+      detail: "Fast, standard quality",
+      value: "linear",
+    },
+    {
+      label: "Sinc",
+      detail: "Slow, high quality (no aliasing)",
+      value: "sinc",
+    },
+  ];
+
+  let resampleQuality = $state(resampleQualityOptions[0]!.label);
+  const selectedResampleQuality = $derived(
+    resampleQualityOptions.find((option) => option.label === resampleQuality) ??
+      resampleQualityOptions[0],
+  );
+
   const triggerContent = $derived(
     selectedChart && itemToAdd
       ? (itemToAdd.fileIndex.get(selectedChart)?.name ?? `Select a chart`)
@@ -275,6 +300,7 @@
           sampleRate: parseInt(sampleRate),
           bitsPerSample: selectedSampleFormat?.bitDepth ?? 16,
           sampleFormat: selectedSampleFormat?.format ?? "int",
+          resampleQuality: selectedResampleQuality?.value ?? "linear",
         },
       });
 
@@ -399,7 +425,6 @@
         {#each bmsQueue.entries() as [id, item] (id)}
           <div class="flex w-full items-center justify-between">
             <div class="flex items-center gap-4">
-              <Checkbox />
               <div class="flex flex-col">
                 <p>{item.name}</p>
                 <p class="text-sm text-muted-foreground">{item.chart}</p>
@@ -470,7 +495,7 @@
         <div class="flex flex-col gap-1">
           <label for="sampleFormat" class="text-sm font-medium">Sample format</label>
           <p class="text-xs text-muted-foreground">
-            {selectedSampleFormat?.detail} (Select other option to get more info)
+            {selectedSampleFormat?.detail}
           </p>
         </div>
         <Select.Root type="single" name="sampleFormat" bind:value={sampleFormat}>
@@ -480,6 +505,26 @@
           <Select.Content>
             <Select.Group>
               {#each sampleFormatOptions as option (option.label)}
+                <Select.Item value={option.label} label={option.label}>{option.label}</Select.Item>
+              {/each}
+            </Select.Group>
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-1">
+          <label for="resampleQuality" class="text-sm font-medium">Resample quality</label>
+          <p class="text-xs text-muted-foreground">
+            {selectedResampleQuality?.detail}
+          </p>
+        </div>
+        <Select.Root type="single" name="resampleQuality" bind:value={resampleQuality}>
+          <Select.Trigger>
+            {selectedResampleQuality?.label}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Group>
+              {#each resampleQualityOptions as option (option.label)}
                 <Select.Item value={option.label} label={option.label}>{option.label}</Select.Item>
               {/each}
             </Select.Group>

@@ -8,6 +8,8 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptio
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use wide::f32x8;
+use rubato::{Resampler, FastFixedIn};
+use crate::wasm::ResampleMethod;
 
 pub const MIX_SR: u32 = 44100;
 pub const MIX_CH: usize = 2;
@@ -19,6 +21,7 @@ pub const MIX_CH: usize = 2;
 /// * `data` - Input audio data as Arc<[u8]>
 /// * `target_sr` - Target sample rate to resample to
 /// * `target_ch` - Target number of channels
+/// * `quality` - Resampling quality
 ///
 /// # Returns
 ///
@@ -27,6 +30,7 @@ pub fn decode_audio(
     data: Arc<[u8]>,
     target_sr: u32,
     target_ch: usize,
+    quality: ResampleMethod,
 ) -> Result<(Vec<f32>, usize), String> {
     let probed = probe_with_fallback(data.clone()).map_err(|e| format!("probe error: {}", e))?;
 
@@ -74,6 +78,10 @@ pub fn decode_audio(
                 let sr = src_rate.unwrap_or(target_sr);
                 sr as f32 / target_sr as f32
             });
+            let ratio = *step_opt.get_or_insert_with(|| {
+                let sr = src_rate.unwrap_or(target_sr);
+                target_sr as f32 / sr as f32
+            });
             let c0 = $buf.chan(0);
 
             if (step - 1.0).abs() < 1e-8 {
@@ -96,6 +104,64 @@ pub fn decode_audio(
                 }
                 have_prev = false;
                 pos = 0.0;
+            } else if matches!(quality, ResampleMethod::Sinc) {
+                let sr = src_rate.unwrap_or(target_sr);
+                if sr == target_sr {
+                    out_resampled.reserve(frames * target_ch);
+                    if chans > 1 {
+                        let c1 = $buf.chan(1);
+                        for (l_val, r_val) in c0.iter().zip(c1.iter()).take(frames) {
+                            let l = $convert(*l_val);
+                            let r = $convert(*r_val);
+                            out_resampled.push(l);
+                            out_resampled.push(r);
+                        }
+                    } else {
+                        for l_val in c0.iter().take(frames) {
+                            let l = $convert(*l_val);
+                            out_resampled.push(l);
+                            out_resampled.push(l);
+                        }
+                    }
+                } else {
+                    let mut input_frames: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); chans];
+                    if chans > 1 {
+                        let c1 = $buf.chan(1);
+                        for (l_val, r_val) in c0.iter().zip(c1.iter()).take(frames) {
+                            input_frames[0].push($convert(*l_val));
+                            input_frames[1].push($convert(*r_val));
+                        }
+                    } else {
+                        for l_val in c0.iter().take(frames) {
+                            input_frames[0].push($convert(*l_val));
+                        }
+                    }
+
+                    let mut resampler = FastFixedIn::<f32>::new(
+                        ratio as f64,
+                        1.0,
+                        rubato::PolynomialDegree::Septic,
+                        frames,
+                        chans,
+                    ).map_err(|e| format!("Failed to create resampler: {}", e)).unwrap();
+
+                    let resampled = resampler.process(&input_frames, None).unwrap();
+                    
+                    let out_len = resampled[0].len();
+                    out_resampled.reserve(out_len * target_ch);
+                    
+                    if chans > 1 {
+                        for i in 0..out_len {
+                            out_resampled.push(resampled[0][i]);
+                            out_resampled.push(resampled[1][i]);
+                        }
+                    } else {
+                         for i in 0..out_len {
+                            out_resampled.push(resampled[0][i]);
+                            out_resampled.push(resampled[0][i]);
+                        }
+                    }
+                }
             } else if chans > 1 {
                 let c1 = $buf.chan(1);
                 scratch.clear();
