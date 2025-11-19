@@ -459,7 +459,7 @@
           </Select.Trigger>
           <Select.Content>
             <Select.Group>
-              {#each sampleRates as rate}
+              {#each sampleRates as rate (rate)}
                 <Select.Item value={rate.toString()} label={rate.toString()}>{rate}Hz</Select.Item>
               {/each}
             </Select.Group>
@@ -479,7 +479,7 @@
           </Select.Trigger>
           <Select.Content>
             <Select.Group>
-              {#each sampleFormatOptions as option}
+              {#each sampleFormatOptions as option (option.label)}
                 <Select.Item value={option.label} label={option.label}>{option.label}</Select.Item>
               {/each}
             </Select.Group>
