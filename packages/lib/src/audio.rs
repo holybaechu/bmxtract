@@ -1,4 +1,3 @@
-use rayon::prelude::*;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::Arc;
 use symphonia::core::audio::{AudioBufferRef, Signal, SignalSpec};
@@ -18,11 +17,17 @@ pub const MIX_CH: usize = 2;
 /// # Arguments
 ///
 /// * `data` - Input audio data as Arc<[u8]>
+/// * `target_sr` - Target sample rate to resample to
+/// * `target_ch` - Target number of channels
 ///
 /// # Returns
 ///
 /// * `Result<(Vec<f32>, usize), String>` - Result containing decoded audio as a vector of f32 samples and number of frames, or error message
-pub fn decode_audio(data: Arc<[u8]>) -> Result<(Vec<f32>, usize), String> {
+pub fn decode_audio(
+    data: Arc<[u8]>,
+    target_sr: u32,
+    target_ch: usize,
+) -> Result<(Vec<f32>, usize), String> {
     let probed = probe_with_fallback(data.clone()).map_err(|e| format!("probe error: {}", e))?;
 
     let mut format = probed.format;
@@ -66,14 +71,14 @@ pub fn decode_audio(data: Arc<[u8]>) -> Result<(Vec<f32>, usize), String> {
             let chans = $buf.spec().channels.count();
             let frames = $buf.frames();
             let step = *step_opt.get_or_insert_with(|| {
-                let sr = src_rate.unwrap_or(MIX_SR);
-                sr as f32 / MIX_SR as f32
+                let sr = src_rate.unwrap_or(target_sr);
+                sr as f32 / target_sr as f32
             });
             let c0 = $buf.chan(0);
 
             if (step - 1.0).abs() < 1e-8 {
                 // No resampling needed
-                out_resampled.reserve(frames * MIX_CH);
+                out_resampled.reserve(frames * target_ch);
                 if chans > 1 {
                     let c1 = $buf.chan(1);
                     for (l_val, r_val) in c0.iter().zip(c1.iter()).take(frames) {
@@ -94,7 +99,7 @@ pub fn decode_audio(data: Arc<[u8]>) -> Result<(Vec<f32>, usize), String> {
             } else if chans > 1 {
                 let c1 = $buf.chan(1);
                 scratch.clear();
-                scratch.reserve((frames + if have_prev { 1 } else { 0 }) * MIX_CH);
+                scratch.reserve((frames + if have_prev { 1 } else { 0 }) * target_ch);
                 if have_prev {
                     scratch.push(prev_l);
                     scratch.push(prev_r);
@@ -105,8 +110,8 @@ pub fn decode_audio(data: Arc<[u8]>) -> Result<(Vec<f32>, usize), String> {
                     scratch.push(l);
                     scratch.push(r);
                 }
-                resample_interleaved(&scratch, &mut out_resampled, &mut pos, step);
-                let last_idx = scratch.len() - MIX_CH;
+                resample_interleaved(&scratch, &mut out_resampled, &mut pos, step, target_ch);
+                let last_idx = scratch.len() - target_ch;
                 prev_l = scratch[last_idx];
                 prev_r = scratch[last_idx + 1];
                 have_prev = true;
@@ -120,7 +125,7 @@ pub fn decode_audio(data: Arc<[u8]>) -> Result<(Vec<f32>, usize), String> {
                 for l_val in c0.iter().take(frames) {
                     scratch.push($convert(*l_val));
                 }
-                resample_mono(&scratch, &mut out_resampled, &mut pos, step);
+                resample_mono(&scratch, &mut out_resampled, &mut pos, step, target_ch);
                 prev_l = scratch[scratch.len() - 1];
                 have_prev = true;
                 pos -= frames as f32;
@@ -165,34 +170,30 @@ pub fn decode_audio(data: Arc<[u8]>) -> Result<(Vec<f32>, usize), String> {
         }
     }
 
-    let src_sr = src_rate.unwrap_or(MIX_SR);
-    if (src_sr == MIX_SR) && !out_resampled.is_empty() {
-        let out_frames = out_resampled.len() / MIX_CH;
+    let src_sr = src_rate.unwrap_or(target_sr);
+    if (src_sr == target_sr) && !out_resampled.is_empty() {
+        let out_frames = out_resampled.len() / target_ch;
         return Ok((out_resampled, out_frames));
     }
-    let out_frames = out_resampled.len() / MIX_CH;
+    let out_frames = out_resampled.len() / target_ch;
     Ok((out_resampled, out_frames))
 }
 
-/// Decode a batch of audio buffers in parallel.
-///
-/// # Arguments
-///
-/// * `datas` - Vector of audio data as Arc slices
-///
-pub fn decode_audio_batch(datas: Vec<Arc<[u8]>>) -> Vec<Result<(Vec<f32>, usize), String>> {
-    datas.into_par_iter().map(decode_audio).collect()
-}
-
-fn resample_interleaved(scratch: &[f32], out: &mut Vec<f32>, pos: &mut f32, step: f32) {
-    if scratch.len() < MIX_CH {
+fn resample_interleaved(
+    scratch: &[f32],
+    out: &mut Vec<f32>,
+    pos: &mut f32,
+    step: f32,
+    target_ch: usize,
+) {
+    if scratch.len() < target_ch {
         return;
     }
-    let avail_frames = scratch.len() / MIX_CH;
+    let avail_frames = scratch.len() / target_ch;
     let last = (avail_frames - 1) as f32;
     if *pos <= last {
         let est = (((last - *pos) / step).floor() as isize + 1).max(0) as usize;
-        out.reserve(est * MIX_CH);
+        out.reserve(est * target_ch);
     }
     while *pos + step * 7.0 <= last {
         let mut tpos = [0.0f32; 8];
@@ -220,12 +221,20 @@ fn resample_interleaved(scratch: &[f32], out: &mut Vec<f32>, pos: &mut f32, step
             .zip(r0.iter_mut().zip(r1.iter_mut()))
             .enumerate()
         {
-            let b0 = i0_arr[k] * MIX_CH;
-            let b1 = i1_arr[k] * MIX_CH;
+            let b0 = i0_arr[k] * target_ch;
+            let b1 = i1_arr[k] * target_ch;
             *l0_val = scratch[b0];
-            *r0_val = scratch[b0 + 1];
+            *r0_val = if target_ch > 1 {
+                scratch[b0 + 1]
+            } else {
+                scratch[b0]
+            };
             *l1_val = scratch[b1];
-            *r1_val = scratch[b1 + 1];
+            *r1_val = if target_ch > 1 {
+                scratch[b1 + 1]
+            } else {
+                scratch[b1]
+            };
         }
         let l0v = f32x8::from(l0);
         let l1v = f32x8::from(l1);
@@ -246,19 +255,27 @@ fn resample_interleaved(scratch: &[f32], out: &mut Vec<f32>, pos: &mut f32, step
         let i0 = (*pos).floor() as usize;
         let i1 = if i0 + 1 < avail_frames { i0 + 1 } else { i0 };
         let frac = *pos - (i0 as f32);
-        let b0 = i0 * MIX_CH;
-        let b1 = i1 * MIX_CH;
+        let b0 = i0 * target_ch;
+        let b1 = i1 * target_ch;
         let l0 = scratch[b0];
-        let r0 = scratch[b0 + 1];
+        let r0 = if target_ch > 1 {
+            scratch[b0 + 1]
+        } else {
+            scratch[b0]
+        };
         let l1 = scratch[b1];
-        let r1 = scratch[b1 + 1];
+        let r1 = if target_ch > 1 {
+            scratch[b1 + 1]
+        } else {
+            scratch[b1]
+        };
         out.push(l0 + (l1 - l0) * frac);
         out.push(r0 + (r1 - r0) * frac);
         *pos += step;
     }
 }
 
-fn resample_mono(scratch: &[f32], out: &mut Vec<f32>, pos: &mut f32, step: f32) {
+fn resample_mono(scratch: &[f32], out: &mut Vec<f32>, pos: &mut f32, step: f32, target_ch: usize) {
     if scratch.is_empty() {
         return;
     }
@@ -266,7 +283,7 @@ fn resample_mono(scratch: &[f32], out: &mut Vec<f32>, pos: &mut f32, step: f32) 
     let last = (avail_frames - 1) as f32;
     if *pos <= last {
         let est = (((last - *pos) / step).floor() as isize + 1).max(0) as usize;
-        out.reserve(est * MIX_CH);
+        out.reserve(est * target_ch);
     }
     while *pos + step * 7.0 <= last {
         let mut tpos = [0.0f32; 8];

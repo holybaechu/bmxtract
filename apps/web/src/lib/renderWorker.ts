@@ -7,6 +7,7 @@ import {
   createGetManyBytes,
   concatenateChunks,
 } from "./utils/workerHelpers";
+import { AudioOptions, convert_bms_to_wav, SampleFormat } from "@bmxtract/lib";
 
 log.debug("Started worker.");
 
@@ -15,15 +16,7 @@ const sw = self as unknown as {
   navigator?: { hardwareConcurrency?: number };
 };
 
-let renderFn:
-  | ((
-      bms_text: string,
-      use_float32: boolean,
-      get_many_bytes: (paths: string[]) => Promise<(Uint8Array | undefined)[]>,
-      on_chunk: (u8: Uint8Array) => void,
-      on_progress: (progress: number, stage: string) => void,
-    ) => Promise<void>)
-  | null = null;
+let renderFn: typeof convert_bms_to_wav | null = null;
 
 const postMessage = createWorkerMessenger();
 const cacheManager = createFileCacheManager();
@@ -37,7 +30,7 @@ sw.onmessage = async (ev: MessageEvent<Message>) => {
   switch (ev.data.type) {
     case MessageType.INIT:
       try {
-        const { default: init, initThreadPool, convert_bms_to_wav } = await import("@bmxtract/lib");
+        const { default: init, initThreadPool } = await import("@bmxtract/lib");
 
         if (!(await simd())) {
           return postMessage({
@@ -92,7 +85,7 @@ sw.onmessage = async (ev: MessageEvent<Message>) => {
 
     case MessageType.RENDER:
       {
-        const { id, bmsText, useFloat32 } = ev.data;
+        const { id, bmsText, audioOptions } = ev.data;
 
         if (!renderFn) {
           return postMessage({
@@ -126,7 +119,18 @@ sw.onmessage = async (ev: MessageEvent<Message>) => {
             });
           };
 
-          await renderFn(bmsText, useFloat32, getManyBytes, onChunk, onProgress);
+          await renderFn(
+            bmsText,
+            new AudioOptions(
+              audioOptions.channels,
+              audioOptions.sampleRate,
+              audioOptions.bitsPerSample,
+              audioOptions.sampleFormat === "float" ? SampleFormat.Float : SampleFormat.Int,
+            ),
+            onProgress,
+            onChunk,
+            getManyBytes,
+          );
 
           const buffer = concatenateChunks(chunks);
           postMessage({ type: MessageType.RESULT, id, buffer }, [buffer]);

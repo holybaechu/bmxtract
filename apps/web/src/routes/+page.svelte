@@ -25,8 +25,39 @@
   let dropZone: HTMLDivElement;
   let itemToAdd = $state<BmsQueueItem | null>(null);
   let bmsQueue = new SvelteMap<string, BmsQueueItem>();
-  let useFloat32 = $state(false);
+  let useStereo = $state(true);
   let createdUrls: string[] = [];
+
+  let sampleRate = $state("44100");
+  const sampleRateText = $derived(sampleRate + "Hz");
+  const sampleRates = ["44100", "48000"];
+
+  type SampleFormatOption = {
+    label: string;
+    detail: string;
+    bitDepth: number;
+    format: "int" | "float";
+  };
+
+  const sampleFormatOptions: SampleFormatOption[] = [
+    {
+      label: "16-bit PCM",
+      detail: "Best compatibility",
+      bitDepth: 16,
+      format: "int",
+    },
+    {
+      label: "32-bit Float",
+      detail: "Unlimited headroom for editing",
+      bitDepth: 32,
+      format: "float",
+    },
+  ];
+
+  let sampleFormat = $state(sampleFormatOptions[0]!.label);
+  const selectedSampleFormat = $derived(
+    sampleFormatOptions.find((option) => option.label === sampleFormat) ?? sampleFormatOptions[0],
+  );
 
   const triggerContent = $derived(
     selectedChart && itemToAdd
@@ -112,10 +143,7 @@
             {
               const { id, paths } = data;
               const item = bmsQueue.get(id);
-              if (!item) {
-                console.error(`No queue item found for ID: ${id}`);
-                return;
-              }
+              if (!item) return console.error(`No queue item found for ID: ${id}`);
 
               const missingFiles: string[] = [];
               const buffers: ArrayBuffer[] = [];
@@ -181,8 +209,6 @@
 
           case MessageType.ERROR:
             {
-              toast.error(data.error);
-
               if (!data.id) return;
               const pending = pendingRenders.get(data.id);
               if (!pending) return;
@@ -244,13 +270,19 @@
         type: MessageType.RENDER,
         id,
         bmsText,
-        useFloat32,
+        audioOptions: {
+          channels: useStereo ? 2 : 1,
+          sampleRate: parseInt(sampleRate),
+          bitsPerSample: selectedSampleFormat?.bitDepth ?? 16,
+          sampleFormat: selectedSampleFormat?.format ?? "int",
+        },
       });
 
       // Wait for render to complete
       await renderPromise;
     } catch (error) {
       toast.error(`Failed to render ${item.name}: ${error}`);
+      console.error(error);
       pendingRenders.delete(id);
     }
   }
@@ -406,19 +438,53 @@
 
     <div class="w-px bg-border"></div>
 
-    <!-- Settings -->
-    <div class="flex flex-1 flex-col">
-      <h3 class="pb-2 text-lg font-semibold">Settings</h3>
-      <div class="flex flex-1 flex-col gap-2 overflow-y-auto">
-        <div class="flex items-center justify-between">
-          <div class="flex flex-col gap-1">
-            <label for="float32" class="text-sm font-medium">Float32 Output</label>
-            <p class="text-xs text-muted-foreground">
-              Use 32-bit float format (larger files, higher precision)
-            </p>
-          </div>
-          <Checkbox id="float32" bind:checked={useFloat32} />
+    <!-- Options -->
+    <div class="flex flex-1 flex-col gap-4">
+      <h3 class="pb-2 text-lg font-semibold">Options</h3>
+      <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-1">
+          <label for="channels" class="text-sm font-medium">Output to stereo</label>
+          <p class="text-xs text-muted-foreground">Convert to stereo (2 channels)</p>
         </div>
+        <Checkbox id="stereo" bind:checked={useStereo} />
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-1">
+          <label for="sampleRate" class="text-sm font-medium">Sample rate</label>
+          <p class="text-xs text-muted-foreground">Output sample rate</p>
+        </div>
+        <Select.Root type="single" name="sampleRate" bind:value={sampleRate}>
+          <Select.Trigger>
+            {sampleRateText}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Group>
+              {#each sampleRates as rate}
+                <Select.Item value={rate.toString()} label={rate.toString()}>{rate}Hz</Select.Item>
+              {/each}
+            </Select.Group>
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-1">
+          <label for="sampleFormat" class="text-sm font-medium">Sample format</label>
+          <p class="text-xs text-muted-foreground">
+            {selectedSampleFormat?.detail} (Select other option to get more info)
+          </p>
+        </div>
+        <Select.Root type="single" name="sampleFormat" bind:value={sampleFormat}>
+          <Select.Trigger>
+            {selectedSampleFormat?.label}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Group>
+              {#each sampleFormatOptions as option}
+                <Select.Item value={option.label} label={option.label}>{option.label}</Select.Item>
+              {/each}
+            </Select.Group>
+          </Select.Content>
+        </Select.Root>
       </div>
     </div>
   </Card>

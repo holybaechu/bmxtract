@@ -24,7 +24,16 @@ type MessagePayloadMap = {
   [MessageType.PROGRESS]: { id: string; progress: number; stage: string };
 
   // C2S
-  [MessageType.RENDER]: { id: string; bmsText: string; useFloat32: boolean };
+  [MessageType.RENDER]: {
+    id: string;
+    bmsText: string;
+    audioOptions: {
+      channels: number;
+      sampleRate: number;
+      bitsPerSample: number;
+      sampleFormat: "int" | "float";
+    };
+  };
   [MessageType.READ_FILES_RESPONSE]: {
     id: string;
     buffers: (ArrayBuffer | undefined)[];

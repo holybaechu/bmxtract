@@ -8,14 +8,97 @@ use crate::mixer::{bucketize_events, mix_chunk, precompute_overlaps, prepare_eve
 use crate::timeline::{build_tempo_map, extract_sound_events};
 use ahash::AHashMap;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use wide::f32x8;
+use num_enum::TryFromPrimitive;
 
 type DecodeResult = Result<(usize, (Vec<f32>, usize)), String>;
 
+#[wasm_bindgen]
+#[repr(u8)]
+#[derive(Copy, Clone, TryFromPrimitive, Serialize)]
+pub enum SampleFormat {
+    Int,
+    Float,
+}
+
+impl<'de> Deserialize<'de> for SampleFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SampleFormatVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SampleFormatVisitor {
+            type Value = SampleFormat;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an i64")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                SampleFormat::try_from(value as u8).map_err(|_| E::custom("Invalid SampleFormat"))
+            }
+        }
+
+        deserializer.deserialize_any(SampleFormatVisitor)
+    }
+}
+
+#[wasm_bindgen]
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub struct AudioOptions {
+    channels: u16,
+    sample_rate: u32,
+    bits_per_sample: u16,
+    sample_format: SampleFormat,
+}
+
+#[wasm_bindgen]
+impl AudioOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        channels: u16,
+        sample_rate: u32,
+        bits_per_sample: u16,
+        sample_format: SampleFormat,
+    ) -> Self {
+        Self {
+            channels,
+            sample_rate,
+            bits_per_sample,
+            sample_format,
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn bits_per_sample(&self) -> u16 {
+        self.bits_per_sample
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn sample_format(&self) -> SampleFormat {
+        self.sample_format
+    }
+}
+
 #[inline]
-fn convert_to_i16_simd(samples: &[f32], buf_bytes: &mut Vec<u8>) {
+fn convert_to_i16(samples: &[f32], buf_bytes: &mut Vec<u8>) {
     buf_bytes.clear();
     buf_bytes.reserve(samples.len() * 2);
     let n = samples.len();
@@ -80,17 +163,19 @@ fn report_progress(on_progress: &js_sys::Function, progress: u32, stage: &str) {
 
 #[wasm_bindgen]
 pub async fn convert_bms_to_wav(
-    bms_text: &str,
-    use_float32: bool,
-    get_many_bytes: &js_sys::Function,
-    on_chunk: &js_sys::Function,
-    on_progress: &js_sys::Function,
+    bms_text: String,
+    audio_options: JsValue,
+    on_progress: js_sys::Function,
+    on_chunk: js_sys::Function,
+    get_many_bytes: js_sys::Function,
 ) -> Result<(), JsValue> {
-    report_progress(on_progress, 5, "Parsing BMS");
+    let audio_options: AudioOptions = serde_wasm_bindgen::from_value(audio_options)?;
+
+    report_progress(&on_progress, 5, "Parsing BMS");
     let bms =
-        Bms::parse(bms_text).map_err(|e| JsValue::from_str(&format!("BMS parse error: {}", e)))?;
+        Bms::parse(&bms_text).map_err(|e| JsValue::from_str(&format!("BMS parse error: {}", e)))?;
     let tempo_map = build_tempo_map(&bms);
-    report_progress(on_progress, 10, "Building tempo map");
+    report_progress(&on_progress, 10, "Building tempo map");
 
     let mut filenames: Vec<String> = {
         let mut v = Vec::with_capacity(bms.header.audio_files.len());
@@ -104,7 +189,10 @@ pub async fn convert_bms_to_wav(
         filename_to_id.insert(f.clone(), i);
     }
 
-    let sound_events = extract_sound_events(&bms, &tempo_map, &filename_to_id);
+    let channels = audio_options.channels() as usize;
+    let sample_rate = audio_options.sample_rate();
+    let sound_events =
+        extract_sound_events(&bms, &tempo_map, &filename_to_id, sample_rate, channels);
     if sound_events.is_empty() {
         return Err(JsValue::from_str("No sound events found"));
     }
@@ -127,7 +215,7 @@ pub async fn convert_bms_to_wav(
     let promise: js_sys::Promise = promise_val
         .dyn_into()
         .map_err(|_| JsValue::from_str("get_many_bytes did not return a Promise"))?;
-    report_progress(on_progress, 15, "Loading audio files");
+    report_progress(&on_progress, 15, "Loading audio files");
     let resolved = JsFuture::from(promise).await?;
 
     let arr: Array = if let Some(a) = resolved.dyn_ref::<Array>() {
@@ -155,16 +243,16 @@ pub async fn convert_bms_to_wav(
         }
     }
 
-    report_progress(on_progress, 20, "Decoding audio files");
+    report_progress(&on_progress, 20, "Decoding audio files");
     let results: Vec<DecodeResult> = inputs
         .into_par_iter()
         .map(|(id, bytes)| {
-            crate::audio::decode_audio(bytes)
+            crate::audio::decode_audio(bytes, sample_rate, channels)
                 .map_err(|e| format!("Error while decoding {}: {}", filenames[id], e))
                 .map(|r| (id, r))
         })
         .collect();
-    report_progress(on_progress, 50, "Audio decoded");
+    report_progress(&on_progress, 50, "Audio decoded");
     let mut decoded_pairs: Vec<(usize, (Vec<f32>, usize))> = Vec::with_capacity(results.len());
     for r in results {
         match r {
@@ -180,21 +268,30 @@ pub async fn convert_bms_to_wav(
         decoded_vec[id] = (buf, frames);
     }
 
-    report_progress(on_progress, 55, "Preparing events");
-    let prepared = prepare_events(&sound_events, &decoded_vec);
+    report_progress(&on_progress, 55, "Preparing events");
+    let prepared = prepare_events(&sound_events, &decoded_vec, channels);
     if prepared.total_len == 0 {
         return Err(JsValue::from_str("Nothing to mix"));
     }
-    let (chunk_count, buckets) = bucketize_events(&prepared.events, prepared.total_len);
-    let pre = precompute_overlaps(&prepared.events, &decoded_vec, &buckets, prepared.total_len);
-    report_progress(on_progress, 60, "Mixing audio");
+    let (chunk_count, buckets) =
+        bucketize_events(&prepared.events, prepared.total_len, sample_rate, channels);
+    let pre = precompute_overlaps(
+        &prepared.events,
+        &decoded_vec,
+        &buckets,
+        prepared.total_len,
+        sample_rate,
+        channels,
+    );
+    report_progress(&on_progress, 60, "Mixing audio");
 
-    let channels = crate::audio::MIX_CH as u16;
-    let sample_rate = crate::audio::MIX_SR;
-    let bits_per_sample: u16 = if use_float32 { 32 } else { 16 };
-    let audio_format: u16 = if use_float32 { 3 } else { 1 };
-    let block_align: u16 = channels * (bits_per_sample / 8);
-    let byte_rate: u32 = sample_rate * block_align as u32;
+    let out_channels = audio_options.channels();
+    let out_sample_rate = audio_options.sample_rate();
+    let bits_per_sample = audio_options.bits_per_sample();
+    let use_float = matches!(audio_options.sample_format(), SampleFormat::Float);
+    let audio_format: u16 = if use_float { 3 } else { 1 };
+    let block_align: u16 = out_channels * (bits_per_sample / 8);
+    let byte_rate: u32 = out_sample_rate * block_align as u32;
 
     let bytes_per_sample: u32 = (bits_per_sample as u32) / 8;
     let total_bytes_64 = (prepared.total_len as u64) * (bytes_per_sample as u64);
@@ -210,21 +307,29 @@ pub async fn convert_bms_to_wav(
     header.extend_from_slice(b"fmt ");
     header.extend_from_slice(&16u32.to_le_bytes());
     header.extend_from_slice(&audio_format.to_le_bytes());
-    header.extend_from_slice(&channels.to_le_bytes());
-    header.extend_from_slice(&sample_rate.to_le_bytes());
+    header.extend_from_slice(&out_channels.to_le_bytes());
+    header.extend_from_slice(&out_sample_rate.to_le_bytes());
     header.extend_from_slice(&byte_rate.to_le_bytes());
     header.extend_from_slice(&block_align.to_le_bytes());
     header.extend_from_slice(&bits_per_sample.to_le_bytes());
     header.extend_from_slice(b"data");
     header.extend_from_slice(&data_len.to_le_bytes());
-    call_chunk(on_chunk, &header)?;
-    report_progress(on_progress, 65, "Writing WAV header");
+    call_chunk(&on_chunk, &header)?;
+    report_progress(&on_progress, 65, "Writing WAV header");
 
     let (tx, rx) = mpsc::channel::<(usize, Vec<f32>)>();
     (0..chunk_count)
         .into_par_iter()
         .for_each_with(tx.clone(), |s, ci| {
-            let buf = mix_chunk(ci, &prepared.events, &decoded_vec, &pre, prepared.total_len);
+            let buf = mix_chunk(
+                ci,
+                &prepared.events,
+                &decoded_vec,
+                &pre,
+                prepared.total_len,
+                sample_rate,
+                channels,
+            );
             let _ = s.send((ci, buf));
         });
     drop(tx);
@@ -236,12 +341,12 @@ pub async fn convert_bms_to_wav(
     while emitted < chunk_count {
         if let Ok((ci, samples)) = rx.recv() {
             if ci == next_ci {
-                if use_float32 {
+                if use_float {
                     let bytes: &[u8] = bytemuck::cast_slice(&samples);
-                    call_chunk(on_chunk, bytes)?;
+                    call_chunk(&on_chunk, bytes)?;
                 } else {
-                    convert_to_i16_simd(&samples, &mut buf_bytes);
-                    call_chunk(on_chunk, &buf_bytes)?;
+                    convert_to_i16(&samples, &mut buf_bytes);
+                    call_chunk(&on_chunk, &buf_bytes)?;
                 }
                 next_ci += 1;
                 emitted += 1;
@@ -249,16 +354,16 @@ pub async fn convert_bms_to_wav(
                 // Report progress every 10 chunks
                 if emitted.is_multiple_of(10) || emitted == chunk_count {
                     let progress = 65 + ((emitted as f32 / chunk_count as f32) * 30.0) as u32;
-                    report_progress(on_progress, progress, "Mixing audio");
+                    report_progress(&on_progress, progress, "Mixing audio");
                 }
 
                 while let Some(samples2) = pending.remove(&next_ci) {
-                    if use_float32 {
+                    if use_float {
                         let bytes: &[u8] = bytemuck::cast_slice(&samples2);
-                        call_chunk(on_chunk, bytes)?;
+                        call_chunk(&on_chunk, bytes)?;
                     } else {
-                        convert_to_i16_simd(&samples2, &mut buf_bytes);
-                        call_chunk(on_chunk, &buf_bytes)?;
+                        convert_to_i16(&samples2, &mut buf_bytes);
+                        call_chunk(&on_chunk, &buf_bytes)?;
                     }
                     next_ci += 1;
                     emitted += 1;
