@@ -7,12 +7,12 @@ use crate::bms::Bms;
 use crate::mixer::{bucketize_events, mix_chunk, precompute_overlaps, prepare_events};
 use crate::timeline::{build_tempo_map, extract_sound_events};
 use ahash::AHashMap;
+use num_enum::TryFromPrimitive;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::{Arc, mpsc};
 use wide::f32x8;
-use num_enum::TryFromPrimitive;
 
 type DecodeResult = Result<(usize, (Vec<f32>, usize)), String>;
 
