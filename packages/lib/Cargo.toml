@@ -15,7 +15,7 @@ wasm-bindgen-rayon = "1.3.0"
 wasm-bindgen-futures = "0.4.55"
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 ahash = "0.8.12"
-wide = "0.8.2"
+wide = "1.0.0"
 wasm-bindgen = "0.2.105"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"
