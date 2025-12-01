@@ -40,7 +40,7 @@ pub fn decode_audio(
 
     let mut src_rate: Option<u32> = track.codec_params.sample_rate;
     let mut channels: usize = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
-    
+
     let mut source_samples: Vec<f32> = Vec::new();
 
     loop {
@@ -74,7 +74,9 @@ pub fn decode_audio(
                             let scale = 2.0 / u16::MAX as f32;
                             let chans = buf.spec().channels.count();
                             if chans == 1 {
-                                for &v in buf.chan(0) { source_samples.push(v as f32 * scale - 1.0); }
+                                for &v in buf.chan(0) {
+                                    source_samples.push(v as f32 * scale - 1.0);
+                                }
                             } else {
                                 let c0 = buf.chan(0);
                                 let c1 = buf.chan(1);
@@ -88,7 +90,9 @@ pub fn decode_audio(
                             let scale = 1.0 / i16::MAX as f32;
                             let chans = buf.spec().channels.count();
                             if chans == 1 {
-                                for &v in buf.chan(0) { source_samples.push(v as f32 * scale); }
+                                for &v in buf.chan(0) {
+                                    source_samples.push(v as f32 * scale);
+                                }
                             } else {
                                 let c0 = buf.chan(0);
                                 let c1 = buf.chan(1);
@@ -102,7 +106,9 @@ pub fn decode_audio(
                             let scale = 1.0 / i32::MAX as f32;
                             let chans = buf.spec().channels.count();
                             if chans == 1 {
-                                for &v in buf.chan(0) { source_samples.push(v as f32 * scale); }
+                                for &v in buf.chan(0) {
+                                    source_samples.push(v as f32 * scale);
+                                }
                             } else {
                                 let c0 = buf.chan(0);
                                 let c1 = buf.chan(1);
@@ -128,7 +134,9 @@ pub fn decode_audio(
                         AudioBufferRef::F64(buf) => {
                             let chans = buf.spec().channels.count();
                             if chans == 1 {
-                                for &v in buf.chan(0) { source_samples.push(v as f32); }
+                                for &v in buf.chan(0) {
+                                    source_samples.push(v as f32);
+                                }
                             } else {
                                 let c0 = buf.chan(0);
                                 let c1 = buf.chan(1);
@@ -152,7 +160,7 @@ pub fn decode_audio(
     }
 
     let src_sr = src_rate.unwrap_or(target_sr);
-    
+
     // Perform resampling
     let out_resampled = if src_sr == target_sr {
         // No resampling needed, just channel conversion
@@ -161,7 +169,7 @@ pub fn decode_audio(
         match quality {
             ResampleMethod::Linear => {
                 resample_linear(&source_samples, src_sr, channels, target_sr, target_ch)
-            },
+            }
             ResampleMethod::Sinc => {
                 resample_sinc(&source_samples, src_sr, channels, target_sr, target_ch)?
             }
@@ -176,10 +184,10 @@ fn convert_channels(input: &[f32], src_ch: usize, target_ch: usize) -> Vec<f32> 
     if src_ch == target_ch {
         return input.to_vec();
     }
-    
+
     let frames = input.len() / src_ch;
     let mut out = Vec::with_capacity(frames * target_ch);
-    
+
     if src_ch == 1 && target_ch == 2 {
         for &s in input {
             out.push(s);
@@ -190,10 +198,10 @@ fn convert_channels(input: &[f32], src_ch: usize, target_ch: usize) -> Vec<f32> 
             out.push((chunk[0] + chunk[1]) * 0.5);
         }
     } else {
-         for chunk in input.chunks(src_ch) {
-            for i in 0..target_ch {
+        for chunk in input.chunks(src_ch) {
+            for (i, item) in chunk.iter().enumerate().take(target_ch) {
                 if i < src_ch {
-                    out.push(chunk[i]);
+                    out.push(*item);
                 } else {
                     out.push(0.0);
                 }
@@ -213,44 +221,52 @@ fn resample_linear(
     let mut out = Vec::new();
     let step = src_sr as f32 / target_sr as f32;
     let mut pos = 0.0;
-    
+
     let frames = input.len() / src_ch;
     let out_frames = (frames as f32 / step).ceil() as usize;
     out.reserve(out_frames * target_ch);
-    
+
     let last_frame = (frames - 1) as f32;
-    
+
     while pos <= last_frame {
         let i0 = pos.floor() as usize;
         let i1 = (i0 + 1).min(frames - 1);
         let frac = pos - i0 as f32;
-        
+
         let base0 = i0 * src_ch;
         let base1 = i1 * src_ch;
-        
+
         if target_ch == 2 {
             let l0 = input[base0];
             let r0 = if src_ch > 1 { input[base0 + 1] } else { l0 };
-            
+
             let l1 = input[base1];
             let r1 = if src_ch > 1 { input[base1 + 1] } else { l1 };
-            
+
             out.push(l0 + (l1 - l0) * frac);
             out.push(r0 + (r1 - r0) * frac);
         } else {
             // Target Mono
-             let l0 = input[base0];
-             let val0 = if src_ch > 1 { (l0 + input[base0 + 1]) * 0.5 } else { l0 };
-             
-             let l1 = input[base1];
-             let val1 = if src_ch > 1 { (l1 + input[base1 + 1]) * 0.5 } else { l1 };
-             
-             out.push(val0 + (val1 - val0) * frac);
+            let l0 = input[base0];
+            let val0 = if src_ch > 1 {
+                (l0 + input[base0 + 1]) * 0.5
+            } else {
+                l0
+            };
+
+            let l1 = input[base1];
+            let val1 = if src_ch > 1 {
+                (l1 + input[base1 + 1]) * 0.5
+            } else {
+                l1
+            };
+
+            out.push(val0 + (val1 - val0) * frac);
         }
-        
+
         pos += step;
     }
-    
+
     out
 }
 
@@ -263,7 +279,7 @@ fn resample_sinc(
 ) -> Result<Vec<f32>, String> {
     let ratio = target_sr as f64 / src_sr as f64;
     let frames = input.len() / src_ch;
-    
+
     // De-interleave to planar
     let mut planar_in = vec![Vec::with_capacity(frames); src_ch];
     if src_ch == 1 {
@@ -274,7 +290,7 @@ fn resample_sinc(
             planar_in[1].push(chunk[1]);
         }
     }
-    
+
     let chunk_size = 1024;
     let mut resampler = FastFixedIn::<f32>::new(
         ratio,
@@ -282,11 +298,12 @@ fn resample_sinc(
         rubato::PolynomialDegree::Septic,
         chunk_size,
         src_ch,
-    ).map_err(|e| format!("Failed to create resampler: {}", e))?;
-    
+    )
+    .map_err(|e| format!("Failed to create resampler: {}", e))?;
+
     let mut planar_out = vec![Vec::new(); src_ch];
     let num_chunks = frames / chunk_size;
-    
+
     // Process full chunks
     for i in 0..num_chunks {
         let start = i * chunk_size;
@@ -295,13 +312,15 @@ fn resample_sinc(
         for c in 0..src_ch {
             chunk_in[c].extend_from_slice(&planar_in[c][start..end]);
         }
-        
-        let chunk_out = resampler.process(&chunk_in, None).map_err(|e| format!("Resampling error: {}", e))?;
+
+        let chunk_out = resampler
+            .process(&chunk_in, None)
+            .map_err(|e| format!("Resampling error: {}", e))?;
         for c in 0..src_ch {
             planar_out[c].extend_from_slice(&chunk_out[c]);
         }
     }
-    
+
     // Handle remainder
     let remainder = frames % chunk_size;
     if remainder > 0 {
@@ -311,31 +330,44 @@ fn resample_sinc(
             let slice = &planar_in[c][start..];
             chunk_in[c][..slice.len()].copy_from_slice(slice);
         }
-        
-        let chunk_out = resampler.process(&chunk_in, None).map_err(|e| format!("Resampling error: {}", e))?;
-        
-         for c in 0..src_ch {
+
+        let chunk_out = resampler
+            .process(&chunk_in, None)
+            .map_err(|e| format!("Resampling error: {}", e))?;
+
+        for c in 0..src_ch {
             planar_out[c].extend_from_slice(&chunk_out[c]);
         }
     }
-    
+
     // Interleave and convert channels
     let out_frames = planar_out[0].len();
     let mut out = Vec::with_capacity(out_frames * target_ch);
-    
-    for i in 0..out_frames {
-        if target_ch == 2 {
-            let l = planar_out[0][i];
-            let r = if src_ch > 1 { planar_out[1][i] } else { l };
-            out.push(l);
-            out.push(r);
-        } else {
-            let l = planar_out[0][i];
-            let val = if src_ch > 1 { (l + planar_out[1][i]) * 0.5 } else { l };
-            out.push(val);
+
+    if src_ch == 1 {
+        for &l in planar_out[0].iter().take(out_frames) {
+            if target_ch == 2 {
+                out.push(l);
+                out.push(l);
+            } else {
+                out.push(l);
+            }
+        }
+    } else {
+        for (&l, &r) in planar_out[0]
+            .iter()
+            .zip(planar_out[1].iter())
+            .take(out_frames)
+        {
+            if target_ch == 2 {
+                out.push(l);
+                out.push(r);
+            } else {
+                out.push((l + r) * 0.5);
+            }
         }
     }
-    
+
     Ok(out)
 }
 
