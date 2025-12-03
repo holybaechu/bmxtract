@@ -23,7 +23,7 @@
     {
       "matchDepNames": ["node", "@types/node"],
       "matchDepTypes": ["engines", "devDependencies", "uses-with"],
-      "allowedVersions": "<=22"
+      "allowedVersions": "<=24"
     }
   ]
 }
