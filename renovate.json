@@ -9,12 +9,6 @@
   },
   "packageRules": [
     {
-      "matchDepTypes": ["devDependencies"],
-      "matchPackageNames": ["lint", "prettier"],
-      "automerge": true,
-      "platformAutomerge": true
-    },
-    {
       "matchUpdateTypes": ["minor", "patch"],
       "matchCurrentVersion": "!/^0/",
       "automerge": true,
