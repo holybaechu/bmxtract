@@ -46,7 +46,12 @@ export function createFileCacheManager() {
         return null;
       }
       const result = buffers.map((b) => (b ? new Uint8Array(b) : undefined));
-      resolver(result);
+      if (typeof resolver === "function") {
+        resolver(result);
+      } else {
+        // Optionally log a warning or handle gracefully
+        return null;
+      }
       pendingFileReads.delete(id);
       return result;
     },
