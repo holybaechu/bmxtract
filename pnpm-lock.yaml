@@ -171,8 +171,8 @@ importers:
   packages/lib:
     devDependencies:
       wasm-pack:
-        specifier: ^0.13.1
-        version: 0.13.1
+        specifier: ^0.14.0
+        version: 0.14.0
 
   packages/typescript-config: {}
 
@@ -2047,8 +2047,8 @@ packages:
   wasm-feature-detect@1.8.0:
     resolution: {integrity: sha512-zksaLKM2fVlnB5jQQDqKXXwYHLQUVH9es+5TOOHwGOVJOCeRBCiPjwSg+3tN2AdTCzjgli4jijCH290kXb/zWQ==}
 
-  wasm-pack@0.13.1:
-    resolution: {integrity: sha512-P9exD4YkjpDbw68xUhF3MDm/CC/3eTmmthyG5bHJ56kalxOTewOunxTke4SyF8MTXV6jUtNjXggPgrGmMtczGg==}
+  wasm-pack@0.14.0:
+    resolution: {integrity: sha512-7uKj+483b6ETTnuWHK3zKNB3Ca3M159tPZ5shyXxI4j7i9Lk82rL2ck/L6E9O5VMWk9JgowdtTBOSfWmGBRFtw==}
     hasBin: true
 
   webidl-conversions@3.0.1:
@@ -3646,7 +3646,7 @@ snapshots:
 
   wasm-feature-detect@1.8.0: {}
 
-  wasm-pack@0.13.1:
+  wasm-pack@0.14.0:
     dependencies:
       binary-install: 1.1.2
     transitivePeerDependencies:
